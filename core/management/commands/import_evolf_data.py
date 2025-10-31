@@ -64,4 +64,4 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"✅ Successfully imported {len(objects)} records into PostgreSQL!"))
 
 
-#python manage.py import_evolf_data data/enhanced_data_with_species_links.csv
+#python manage.py import_evolf_data core/management/enhanced_data_with_species_links.csv
