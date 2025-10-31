@@ -2,7 +2,7 @@ from django.db import models
 
 # Create your models here.
 
-class Receptor(models.Model):
+class Evolf(models.Model):
     EvOlf_ID = models.CharField(max_length=100, null=True, blank=True)
     Class = models.CharField(max_length=100, null=True, blank=True)
     Species = models.CharField(max_length=100, null=True, blank=True)
@@ -39,4 +39,4 @@ class Receptor(models.Model):
     Comment = models.TextField(null=True, blank=True)
 
     def __str__(self):
-        return self.Receptor or str(self.id)
+        return self.Evolf or str(self.id)
