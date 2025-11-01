@@ -1,14 +1,14 @@
+from elasticsearch import Elasticsearch
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.http import JsonResponse, HttpResponseBadRequest
-from elasticsearch import Elasticsearch
 
-
+# ✅ Elasticsearch config (using HTTPS)
 es = Elasticsearch(
-    "http://localhost:9200",
+    "https://localhost:9200",
     basic_auth=("elastic", "HSoMIJHnTnrIiueNgCP2"),
-    verify_certs=False
+    verify_certs=False  # ignore SSL self-signed cert
 )
 
 INDEX_NAME = "evolf"
@@ -20,7 +20,7 @@ class ElasticSearchView(View):
         if not query:
             return HttpResponseBadRequest("Missing 'q' parameter.")
 
-        # Use wildcard to handle case-insensitive and partial matches
+        # wildcard query for flexible matching
         body = {
             "query": {
                 "bool": {
@@ -47,7 +47,3 @@ class ElasticSearchView(View):
             return JsonResponse({"results": results})
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
-
-#python manage.py elastic_search
-
-#curl "http://127.0.0.1:8000/api/search/?q=human"
