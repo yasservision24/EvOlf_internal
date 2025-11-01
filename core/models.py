@@ -2,7 +2,7 @@ from django.db import models
 
 # Create your models here.
 
-class Evolf(models.Model):
+class EvOlf(models.Model):
     EvOlf_ID = models.CharField(max_length=100, null=True, blank=True)
     Class = models.CharField(max_length=100, null=True, blank=True)
     Species = models.CharField(max_length=100, null=True, blank=True)

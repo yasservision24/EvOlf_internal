@@ -35,8 +35,23 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'core',  # your app
+    'core',  
+    'rest_framework',
+    # 'django_elasticsearch_dsl',
+
 ]
+
+# Elasticsearch settings
+ELASTICSEARCH_DSL = {
+    'default': {
+        'hosts': 'http://localhost:9200'  # default Elasticsearch host
+    },
+}
+
+
+RST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.pagination.PageNumberPagination', 'PageSize: 20'],
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
