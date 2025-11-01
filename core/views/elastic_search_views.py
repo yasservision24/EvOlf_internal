@@ -4,8 +4,9 @@ from django.views import View
 from django.http import JsonResponse, HttpResponseBadRequest
 from elasticsearch import Elasticsearch
 
+
 es = Elasticsearch(
-    "https://localhost:9200",
+    "http://localhost:9200",
     basic_auth=("elastic", "HSoMIJHnTnrIiueNgCP2"),
     verify_certs=False
 )
