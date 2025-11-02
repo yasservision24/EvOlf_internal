@@ -6,7 +6,7 @@ from django.http import JsonResponse, HttpResponseBadRequest
 
 # ✅ Elasticsearch config (using HTTPS)
 es = Elasticsearch(
-    "https://localhost:9200",
+    "http://localhost:9200",
     basic_auth=("elastic", "HSoMIJHnTnrIiueNgCP2"),
     verify_certs=False  # ignore SSL self-signed cert
 )
