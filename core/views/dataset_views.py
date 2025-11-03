@@ -55,19 +55,13 @@ class DatasetListAPIView(APIView):
         class_filter = request.GET.get('class') or request.GET.get('classFilter')
         mutation_type = request.GET.get('mutationType')
 
+        # Base queryset
+        base_qs = EvOlf.objects.all()
         qs = EvOlf.objects.all()
 
-        # --- Apply filters
-        if species:
-            qs = qs.filter(Species__iexact=species)
-        if class_filter:
-            qs = qs.filter(Class__iexact=class_filter)
-        if mutation_type:
-            qs = qs.filter(Mutation_Status__iexact=mutation_type)
 
+        # --- Step 1: Search Phase ---
         results_ids_ordered = None
-
-        # --- Run ES search (if available)
         if search:
             try:
                 if ES_AVAILABLE:
@@ -83,95 +77,107 @@ class DatasetListAPIView(APIView):
                         }
                     }
                     res = es.search(index="evolf", body=body)
-                    results_ids_ordered = [
-                        hit["_source"].get("EvOlf_ID") for hit in res["hits"]["hits"]
-                    ]
+                    results_ids_ordered = [hit["_source"].get("EvOlf_ID") for hit in res["hits"]["hits"]]
             except Exception:
                 results_ids_ordered = None
 
-            # --- Fallback to Postgres trigram if ES fails
-            if not results_ids_ordered:
-                qs = qs.annotate(similarity=TrigramSimilarity('Receptor', search)) \
-                       .filter(similarity__gt=0.2) \
-                       .order_by('-similarity')
-
-        # --- Maintain ES ordering
-        if results_ids_ordered:
+        # Fallback to Postgres trigram
+        if search and not results_ids_ordered:
+            search_qs = base_qs.annotate(similarity=TrigramSimilarity('Receptor', search)) \
+                            .filter(similarity__gt=0.2) \
+                            .order_by('-similarity')
+        elif results_ids_ordered:
             preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
-            qs = EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered)
-            qs = sorted(qs, key=lambda o: preserved.get(o.EvOlf_ID, 999999))
-
-        # --- Sorting
-        if isinstance(qs, list):
-            reverse = sort_order == "desc"
-            qs = sorted(qs, key=lambda x: getattr(x, sort_by, ""), reverse=reverse)
-
+            search_qs = EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered)
+            search_qs = sorted(search_qs, key=lambda o: preserved.get(o.EvOlf_ID, 999999))
         else:
-            ordering = sort_by if sort_order == "asc" else f"-{sort_by}"
-            qs = qs.order_by(ordering)
+            search_qs = base_qs  # no search term
 
-        # --- Stats before pagination
-        all_qs = EvOlf.objects.all()
-
-        global_stats = {
-            "totalReceptors": EvOlf.objects.values('Receptor').distinct().count(),
-            "totalLigands": EvOlf.objects.values('Ligand').distinct().count(),
-            "totalMutations": EvOlf.objects.exclude(Mutation__isnull=True).count(),
-            "totalSpecies": EvOlf.objects.values('Species').distinct().count(),
-            "uniqueClasses": list(all_qs.values_list('Class', flat=True).distinct()),
-            "uniqueSpecies": list(all_qs.values_list('Species', flat=True).distinct()),
-            "uniqueMutationTypes": list(all_qs.values_list('Mutation_Status', flat=True).distinct()),
-        }
-
-        # --- Pagination
-        paginator = StandardResultsSetPagination()
-        paginator.page_size = limit
-        page_obj = paginator.paginate_queryset(qs, request)
-        serializer = EvOlfSerializer(page_obj, many=True)
-
-
-
-        # --- Return data
-        if isinstance(qs, list):
-            total_rows = len(qs)
-            unique_classes = list({obj.Class for obj in qs if obj.Class})
-            unique_species = list({obj.Species for obj in qs if obj.Species})
-            unique_mutation_types = list({obj.Mutation_Status for obj in qs if obj.Mutation_Status})
+        # --- Step 2: Build Search Statistics (before filters)
+        if isinstance(search_qs, list):
+            unique_classes = list({obj.Class for obj in search_qs if obj.Class})
+            unique_species = list({obj.Species for obj in search_qs if obj.Species})
+            unique_mutation_types = list({obj.Mutation_Status for obj in search_qs if obj.Mutation_Status})
+            total_rows = len(search_qs)
         else:
-            total_rows = qs.count()
-            unique_classes = list(qs.values_list('Class', flat=True).distinct())
-            unique_species = list(qs.values_list('Species', flat=True).distinct())
-            unique_mutation_types = list(qs.values_list('Mutation_Status', flat=True).distinct())
+            unique_classes = list(search_qs.values_list('Class', flat=True).distinct())
+            unique_species = list(search_qs.values_list('Species', flat=True).distinct())
+            unique_mutation_types = list(search_qs.values_list('Mutation_Status', flat=True).distinct())
+            total_rows = search_qs.count()
 
-        filtered_stats = {
+        statistics = {
             "totalRows": total_rows,
             "uniqueClasses": unique_classes,
             "uniqueSpecies": unique_species,
             "uniqueMutationTypes": unique_mutation_types,
         }
 
+        # --- Step 3: Apply Filters ---
+        # --- Apply filters
+        def apply_filters_to_queryset(queryset):
+            if species:
+                queryset = queryset.filter(Species__iexact=species)
+            if class_filter:
+                queryset = queryset.filter(Class__iexact=class_filter)
+            if mutation_type:
+                queryset = queryset.filter(Mutation_Status__iexact=mutation_type)
+            return queryset
 
+        def apply_filters_to_list(data_list):
+            filtered = data_list
+            if species:
+                filtered = [obj for obj in filtered if getattr(obj, "Species", None) == species]
+            if class_filter:
+                filtered = [obj for obj in filtered if getattr(obj, "Class", None) == class_filter]
+            if mutation_type:
+                filtered = [obj for obj in filtered if getattr(obj, "Mutation_Status", None) == mutation_type]
+            return filtered
+        
+        # --- Maintain ES ordering
+        if results_ids_ordered:
+            preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
+            qs = list(EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered))
+            qs.sort(key=lambda o: preserved.get(o.EvOlf_ID, 999999))
+            qs = apply_filters_to_list(qs)
+        else:
+            qs = apply_filters_to_queryset(qs)
+
+
+
+        # --- Step 4: Sorting ---
+        if isinstance(qs, list):
+            reverse = sort_order == "desc"
+            qs = sorted(qs, key=lambda x: getattr(x, sort_by, ""), reverse=reverse)
+        else:
+            ordering = sort_by if sort_order == "asc" else f"-{sort_by}"
+            qs = qs.order_by(ordering)
+
+        # --- Step 5: Pagination ---
+        paginator = StandardResultsSetPagination()
+        paginator.page_size = limit
+        page_obj = paginator.paginate_queryset(qs, request)
+        serializer = EvOlfSerializer(page_obj, many=True)
+
+        pagination_info = {
+            "currentPage": page,
+            "totalPages": (len(qs) if isinstance(qs, list) else qs.count() + limit - 1) // limit,
+            "totalItems": len(qs) if isinstance(qs, list) else qs.count(),
+            "itemsPerPage": limit,
+        }
+
+        # --- Step 6: Filter Options ---
         filter_options = {
             "classes": list(EvOlf.objects.values_list("Class", flat=True).distinct()),
             "species": list(EvOlf.objects.values_list("Species", flat=True).distinct()),
             "mutationTypes": list(EvOlf.objects.values_list("Mutation_Status", flat=True).distinct()),
         }
 
-        pagination_info = {
-            "currentPage": page,
-            "totalPages": (total_rows + limit - 1) // limit,
-            "totalItems": total_rows ,
-            "itemsPerPage": limit,
-            }
-
-                        
         return Response({
             "data": serializer.data,
             "pagination": pagination_info,
-            "global statistics": global_stats,
-            "filtered statiscs": filtered_stats,
-            "filterOptions": filter_options,
-            "all_evolf_ids": [obj.EvOlf_ID for obj in qs],
+            "statistics": statistics,   # ✅ from search results
+            "all_evolf_ids": [obj.EvOlf_ID for obj in qs],  # ✅ from filtered results
+            "filterOptions": filter_options,                # ✅ for sidebar filters
         })
 
         
