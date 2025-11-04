@@ -152,9 +152,9 @@ class DatasetListAPIView(APIView):
 
 
         filter_options = {
-            "classes": list(EvOlf.objects.values_list("Class", flat=True).distinct()),
-            "species": list(EvOlf.objects.values_list("Species", flat=True).distinct()),
-            "mutationTypes": list(EvOlf.objects.values_list("Mutation_Status", flat=True).distinct()),
+            "uniqueClasses": global_stats["uniqueClasses"],
+            "uniqueSpecies": global_stats["uniqueSpecies"],
+            "uniqueMutationTypes": global_stats["uniqueMutationTypes"],
         }
 
         pagination_info = {
@@ -163,13 +163,13 @@ class DatasetListAPIView(APIView):
             "totalItems": total_rows ,
             "itemsPerPage": limit,
             }
+        global_stats.update({"totalRows": total_rows})
 
                         
         return Response({
             "data": serializer.data,
             "pagination": pagination_info,
-            "global statistics": global_stats,
-            "filtered statiscs": filtered_stats,
+            "statistics": global_stats,
             "filterOptions": filter_options,
             "all_evolf_ids": [obj.EvOlf_ID for obj in qs],
         })
