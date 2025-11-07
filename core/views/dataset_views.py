@@ -6,6 +6,7 @@ import datetime
 import os
 
 from django.http import HttpResponse
+from django.http import JsonResponse, FileResponse, Http404
 from django.db.models import Q
 from django.contrib.postgres.search import TrigramSimilarity
 from rest_framework.views import APIView
@@ -14,6 +15,7 @@ from rest_framework.pagination import PageNumberPagination
 
 from core.models import EvOlf
 from core.serializers import EvOlfSerializer
+from core.views.dataset_views import DatasetDetailAPIView
 
 # ES import
 try:
@@ -346,3 +348,36 @@ class DatasetDownloadAPIView(APIView):
         response = HttpResponse(zip_data, content_type="application/zip")
         response["Content-Disposition"] = "attachment; filename=evolf_complete_dataset.zip"
         return response
+
+from core.views.structure_views import format_dataset_detail, FetchStructureFilesAPIView
+from core.models import Dataset
+
+
+class FetchDatasetDetails(APIView):
+    def get(self, request, evolfId):
+        try:
+            entry = Dataset.objects.filter(EvOlf_ID=evolfId).values().first()
+            if not entry:
+                return Response(
+                    {"error": "Entry not found", "status": 404,
+                     "message": f"No entry found with EvOlf ID: {evolfId}"},
+                    status=404
+                )
+
+            formatted_data = format_dataset_detail(entry)
+
+            # Optional: auto-download ligand and protein structures if missing
+            ligand_name = formatted_data.get("ligand")
+            uniprot_id = formatted_data.get("uniprotId")
+            if ligand_name:
+                fetch_view =FetchStructureFilesAPIView()
+                fetch_view.get(request, evolfId)  # triggers the 2D/3D download
+
+            return Response(formatted_data, status=200)
+
+        except Exception as e:
+            return Response(
+                {"error": "Server error", "status": 500, "message": str(e)},
+                status=500
+            )
+
