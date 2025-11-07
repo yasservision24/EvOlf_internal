@@ -167,17 +167,26 @@ class DatasetListAPIView(APIView):
 
         # --- Step 6: Filter Options ---
         filter_options = {
-            "classes": list(EvOlf.objects.values_list("Class", flat=True).distinct()),
-            "species": list(EvOlf.objects.values_list("Species", flat=True).distinct()),
-            "mutationTypes": list(EvOlf.objects.values_list("Mutation_Status", flat=True).distinct()),
+            "uniqueClasses": global_stats["uniqueClasses"],
+            "uniqueSpecies": global_stats["uniqueSpecies"],
+            "uniqueMutationTypes": global_stats["uniqueMutationTypes"],
         }
 
+        pagination_info = {
+            "currentPage": page,
+            "totalPages": (total_rows + limit - 1) // limit,
+            "totalItems": total_rows ,
+            "itemsPerPage": limit,
+            }
+        global_stats.update({"totalRows": total_rows})
+
+                        
         return Response({
             "data": serializer.data,
             "pagination": pagination_info,
-            "statistics": statistics,   # ✅ from search results
-            "all_evolf_ids": [obj.EvOlf_ID for obj in qs],  # ✅ from filtered results
-            "filterOptions": filter_options,                # ✅ for sidebar filters
+            "statistics": global_stats,
+            "filterOptions": filter_options,
+            "all_evolf_ids": [obj.EvOlf_ID for obj in qs],
         })
 
         
