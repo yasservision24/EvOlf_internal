@@ -1,0 +1,6 @@
+HEADER    DUMMY PDB FILE
+ATOM      1  N   MET A   1      11.104  13.207  14.225  1.00 20.00           N
+ATOM      2  CA  MET A   1      12.560  13.507  14.125  1.00 20.00           C
+ATOM      3  C   MET A   1      13.045  14.939  14.525  1.00 20.00           C
+TER
+END

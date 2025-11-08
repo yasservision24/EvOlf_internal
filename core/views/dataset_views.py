@@ -12,10 +12,13 @@ from django.contrib.postgres.search import TrigramSimilarity
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-
+from rest_framework import status
+import math
+import json
 from core.models import EvOlf
 from core.serializers import EvOlfSerializer
-from core.views.dataset_views import DatasetDetailAPIView
+from core.views.structure_views import format_dataset_detail, FetchLocalStructureAPIView
+
 
 # ES import
 try:
@@ -349,35 +352,105 @@ class DatasetDownloadAPIView(APIView):
         response["Content-Disposition"] = "attachment; filename=evolf_complete_dataset.zip"
         return response
 
-from core.views.structure_views import format_dataset_detail, FetchStructureFilesAPIView
-from core.models import Dataset
 
+
+import pandas as pd
+from django.conf import settings
+
+
+def json_safe(obj):
+    """Recursively convert non-serializable / NaN / inf values to None or strings."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [json_safe(v) for v in obj]
+    return obj
+
+
+from core.views.structure_views import format_dataset_detail, FetchLocalStructureAPIView
+
+import os
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from core.models import EvOlf
+from core.views.structure_views import format_dataset_detail
+
+
+
+# ============================================================
+# 1️⃣ FETCH DATASET DETAILS
+# ============================================================
 
 class FetchDatasetDetails(APIView):
+    """
+    GET /api/dataset/details/<evolfId>/
+    Returns JSON exactly in README format (keys and default types/values).
+    """
     def get(self, request, evolfId):
         try:
-            entry = Dataset.objects.filter(EvOlf_ID=evolfId).values().first()
-            if not entry:
-                return Response(
-                    {"error": "Entry not found", "status": 404,
-                     "message": f"No entry found with EvOlf ID: {evolfId}"},
-                    status=404
-                )
+            csv_path = os.path.join(settings.BASE_DIR, "core", "management", "enhanced_data_with_species_links.csv")
+            if not os.path.exists(csv_path):
+                return Response({"error": "Dataset CSV not found", "path": csv_path}, status=status.HTTP_404_NOT_FOUND)
 
-            formatted_data = format_dataset_detail(entry)
+            df = pd.read_csv(csv_path)
 
-            # Optional: auto-download ligand and protein structures if missing
-            ligand_name = formatted_data.get("ligand")
-            uniprot_id = formatted_data.get("uniprotId")
-            if ligand_name:
-                fetch_view =FetchStructureFilesAPIView()
-                fetch_view.get(request, evolfId)  # triggers the 2D/3D download
+            # Accept either column name "EvOlf ID" or "EvOlf_ID"
+            id_col = "EvOlf ID" if "EvOlf ID" in df.columns else ("EvOlf_ID" if "EvOlf_ID" in df.columns else None)
+            if not id_col:
+                return Response({"error": "Missing EvOlf_ID column in dataset"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            return Response(formatted_data, status=200)
+            rows = df[df[id_col] == evolfId].to_dict(orient="records")
+            if not rows:
+                return Response({"error": "Entry not found", "message": f"No record with EvOlf ID: {evolfId}"}, status=status.HTTP_404_NOT_FOUND)
+
+            entry = rows[0]
+
+            # Build formatted data using centralized formatter (passes request for URL building)
+            formatted = format_dataset_detail(entry, request=request)
+
+            # Ensure exact README ordering/keys: produce dict with those keys
+            # format_dataset_detail already returns keys matching README, so just sanitize
+            cleaned = json_safe(formatted)
+
+            return Response(cleaned, status=status.HTTP_200_OK)
 
         except Exception as e:
-            return Response(
-                {"error": "Server error", "status": 500, "message": str(e)},
-                status=500
-            )
+            return Response({"error": "Server Error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# ============================================================
+#  DOWNLOAD FILES AS ZIP
+# ============================================================
+
+class DownloadByEvolfId(APIView):
+    def get(self, request, evolfId):
+        base_dir = settings.MEDIA_ROOT
+        files_to_zip = []
+
+        paths = {
+            "pdb": os.path.join(base_dir, 'pdb_files', f'{evolfId}.pdb'),
+            "sdf": os.path.join(base_dir, 'sdf_files', f'{evolfId}.sdf'),
+            "img": os.path.join(base_dir, 'smiles_2d', f'{evolfId}.png')
+        }
+
+        for p in paths.values():
+            if os.path.exists(p):
+                files_to_zip.append(p)
+
+        if not files_to_zip:
+            return JsonResponse({"error": "No files found for given EvOlf ID"}, status=404)
+
+        zip_filename = f"{evolfId}_data.zip"
+        zip_path = os.path.join(base_dir, zip_filename)
+
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for f in files_to_zip:
+                zipf.write(f, os.path.basename(f))
+
+        response = FileResponse(open(zip_path, 'rb'), as_attachment=True, filename=zip_filename)
+        return response

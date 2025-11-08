@@ -37,6 +37,10 @@ class EvOlf(models.Model):
     Ensembl_ID = models.CharField(max_length=100, null=True, blank=True)
     Ensembl_Link = models.URLField(null=True, blank=True)
     Comment = models.TextField(null=True, blank=True)
+    pdb_data = models.TextField(null=True, blank=True)
+    sdf_data = models.TextField(null=True, blank=True)
+    image_base64 = models.TextField(null=True, blank=True)
+
 
     def __str__(self):
         return self.Evolf or str(self.id)
