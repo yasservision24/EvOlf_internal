@@ -52,7 +52,21 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
     """
     Prepare structured dataset detail response for a single EvoLF entry.
     """
-    evolf_id = entry.get("EvOlf_ID") or entry.get("EvOlf ID") or entry.get("evolfId") or entry.get("EvOlf")
+    def gf(*keys):
+        """Robust getter that handles whitespace, commas, capitalization, and weird key variants."""
+        norm_entry = {k.strip().lower().replace(",", "").replace(" ", ""): v for k, v in entry.items()}
+        for k in keys:
+            if not k:
+                continue
+            nk = k.strip().lower().replace(",", "").replace(" ", "")
+            v = norm_entry.get(nk)
+            if v in [None, "", "nan"]:
+                continue
+            return str(v).strip()
+        return ""
+
+
+    evolf_id = gf("EvOlf ID", "EvOlf_ID", "evolfId")
     if not evolf_id:
         return {"error": "Missing EvOlf_ID"}
 
@@ -87,30 +101,17 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         return f"/media/{rel_path}"
 
 
-    # Safe getter for entry fields
-    def gf(*keys):
-        for k in keys:
-            v = entry.get(k)
-            if v is None:
-                continue
-            try:
-                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-                    continue
-            except Exception:
-                pass
-            return v
-        return ""
+   
 
     # Extract IDs and mutation info
-    uniprot_id = gf("UniProt ID", "uniprotId", "UniProt_ID") or ""
-    ensembl_id = gf("Ensembl ID", "ensemblId", "Ensembl_ID") or ""
-    chembl_id = gf("Ligand ID", "chemblId", "ChEMBL_ID") or ""
-    cid_raw = gf("CID", "pubchemId", "PubChem_ID", "cid") or ""
+    uniprot_id = gf("UniProt ID") 
+    ensembl_id = gf("Ensembl ID")
+    chembl_id = gf("ChEMBL ID") 
+    cid_raw = gf("CID")
     cid = str(cid_raw).split(".")[0] if cid_raw else ""
 
-    mutation_val = gf("Mutation") or ""
-    mutation_status = "Wild-type" if mutation_val == "" else "Mutant"
-
+    
+    
     # Structure URLs
     structure2d_url = build_url(img_file) if os.path.exists(img_path) else ""
     chosen_pdb_rel = next((p for p in pdb_candidates if os.path.exists(os.path.join(media_root, p))), None)
@@ -124,39 +125,39 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "ligand": gf("Ligand") or "",
         "ligandName": gf("Ligand") or "",
         "species": gf("Species") or "",
-        "class": str(gf("Class", "class_field") or ""),
-        "mutation": mutation_val,
-        "mutationStatus": mutation_status,
-        "mutationType": gf("Mutation Type", "mutationType") or "",
-        "mutationImpact": gf("Mutation Impact", "mutationImpact") or "",
-        "receptorSubtype": gf("Receptor SubType", "receptorSubtype") or "Olfactory",
+        "class": gf(" Class") or "",
+        "mutation": gf("Mutation") or "",
+        "mutationStatus": gf("Mutation Status"),
+        "mutationType": gf("Mutation Type") or "",
+        "mutationImpact": gf("Mutation Impact") or "",
+        "receptorSubtype": gf("Receptor SubType"),
         "uniprotId": uniprot_id,
-        "uniprotLink": f"https://www.uniprot.org/uniprot/{uniprot_id}" if uniprot_id else "",
+        "uniprotLink": gf("UniProt Link"),
         "ensemblId": ensembl_id,
-        "ensemblLink": f"https://www.ensembl.org/Homo_sapiens/Gene/Summary?g={ensembl_id}" if ensembl_id else "",
+        "ensemblLink": gf("Ensembl Link"),
         "chemblId": chembl_id,
-        "chemblLink": f"https://www.ebi.ac.uk/chembl/compound_report_card/{chembl_id}" if chembl_id else "",
+        "chemblLink": gf("ChEMBL Link"),
         "cid": cid,
         "pubchemId": cid,
-        "pubchemLink": f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}" if cid else "",
-        "smiles": gf("SMILES", "smiles") or "",
-        "inchi": gf("InChI", "inchi") or "",
-        "inchiKey": gf("InChI Key", "inchiKey") or "",
-        "iupacName": gf("IUPAC Name", "iupacName") or "",
-        "sequence": gf("Sequence", "sequence") or "",
+        "pubchemLink": gf("PubChem Link"),
+        "smiles": gf("SMILES") or "",
+        "inchi": gf("InChi") or "",
+        "inchiKey": gf("InChiKey") or "",
+        "iupacName": gf("IUPAC Name") or "",
+        "sequence": gf("Sequence") or "",
         "pdbData": pdb_text,
         "sdfData": sdf_text,
         "structure2d": structure2d_url,
         "image": structure2d_url,
         "structure3d": structure3d_url,
         "sdfFile": sdf_file_url,
-        "expressionSystem": gf("Expression System", "expressionSystem") or "",
-        "parameter": gf("Parameter", "parameter") or "",
-        "value": str(gf("Value", "value") or ""),
-        "unit": gf("Unit", "unit") or "",
-        "comments": gf("Comments", "comments") or "",
-        "geneSymbol": gf("Gene Symbol", "geneSymbol") or "",
-        "interactionType": gf("Interaction Type", "interactionType") or "",
+        "expressionSystem": gf("Expression System") or "",
+        "parameter": gf("Parameter") or "",
+        "value": str(gf("Value") or ""),
+        "unit": gf("Unit") or "",
+        "comments": gf("Comment") or "",
+        "geneSymbol": gf("Gene Symbol") or "",
+        "interactionType": gf("Interaction Type") or "",
         "interactionValue": _sanitize_scalar(gf("Interaction Value", "interactionValue")) or "",
         "interactionUnit": gf("Interaction Unit", "interactionUnit") or "",
         "quality": gf("Quality", "quality") or "",
