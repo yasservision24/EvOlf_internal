@@ -30,7 +30,7 @@ STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = f"{BASE_URL}/api/media/"   # dynamic according to BASE_URL
-MEDIA_ROOT = BASE_DIR / 'core/management'
+MEDIA_ROOT = BASE_DIR / 'EvOlf_internal/core/management'
 
 
 # -------------------------------
