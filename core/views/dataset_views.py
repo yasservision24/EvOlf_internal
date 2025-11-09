@@ -23,15 +23,29 @@ from core.views.structure_views import format_dataset_detail, FetchLocalStructur
 # ES import
 try:
     from elasticsearch import Elasticsearch
-    es = Elasticsearch(
-        "http://localhost:9200",
-        basic_auth=("elastic", "HSoMIJHnTnrIiueNgCP2"),
-        verify_certs=False
-    )
-    ES_AVAILABLE = True
-except Exception:
-    ES_AVAILABLE = False
 
+    # Load environment variables
+    ES_HOST = os.getenv("ELASTIC_HOST", "http://localhost:9200")
+    ES_USERNAME = os.getenv("ELASTIC_USERNAME", "elastic")
+    ES_PASSWORD = os.getenv("ELASTIC_PASSWORD", "")
+
+    es = Elasticsearch(
+        ES_HOST,
+        basic_auth=(ES_USERNAME, ES_PASSWORD),
+        verify_certs=False  # Set to True if using HTTPS with valid certs
+    )
+
+    # Check if connection works
+    if es.ping():
+        print(f"✅ Connected to Elasticsearch at {ES_HOST}")
+        ES_AVAILABLE = True
+    else:
+        print("⚠️ Could not connect to Elasticsearch.")
+        ES_AVAILABLE = False
+
+except Exception as e:
+    print(f"❌ Elasticsearch connection error: {e}")
+    ES_AVAILABLE = False
 
 # -------------------------------
 # Pagination

@@ -5,10 +5,19 @@ from django.views import View
 from django.http import JsonResponse, HttpResponseBadRequest
 
 # ✅ Elasticsearch config (using HTTPS)
+import os
+
+
+# Load environment variables
+ES_HOST = os.getenv("ELASTIC_HOST", "http://localhost:9200")
+ES_USERNAME = os.getenv("ELASTIC_USERNAME", "elastic")
+ES_PASSWORD = os.getenv("ELASTIC_PASSWORD", "")
+
+# Initialize Elasticsearch client
 es = Elasticsearch(
-    "http://localhost:9200",
-    basic_auth=("elastic", "HSoMIJHnTnrIiueNgCP2"),
-    verify_certs=False  # ignore SSL self-signed cert
+    ES_HOST,
+    basic_auth=(ES_USERNAME, ES_PASSWORD),
+    verify_certs=False  # ignore SSL self-signed certs
 )
 
 INDEX_NAME = "evolf"
