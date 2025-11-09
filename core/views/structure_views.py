@@ -2,103 +2,128 @@
 Structure utilities and views for EvoLF dataset details.
 Includes:
 1. format_dataset_detail() – formats dataset detail response
-2. FetchLocalStructureAPIView – fetches 2D/3D ligand & receptor structures
+2. FetchStructureFilesAPIView – fetches 2D/3D ligand & receptor structures
 """
 
 import os
-import math
+import requests
 from typing import Dict, Optional
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-# =============================
-# Helper functions for safe file access
-# =============================
+import math
+
 
 def _sanitize_scalar(v):
-    """Return JSON-safe scalar (convert NaN/Inf to None)."""
+    """Return JSON-safe scalar (convert NaN/Inf to None or empty string)."""
     try:
-        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-            return None
+        if isinstance(v, float):
+            if math.isnan(v) or math.isinf(v):
+                return None
+        # Keep ints as-is, convert numpy types if needed by str()
         return v
     except Exception:
         return None
 
-def get_media_path(*rel_parts) -> str:
-    """Build absolute path inside MEDIA_ROOT."""
-    return os.path.join(settings.MEDIA_ROOT, *rel_parts)
 
-def file_exists(*rel_parts) -> bool:
-    return os.path.exists(get_media_path(*rel_parts))
-
-def read_media_file(*rel_parts) -> str:
-    path = get_media_path(*rel_parts)
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+def read_file_safe(path: str) -> str:
+    """Return file contents if exists, else empty string."""
+    try:
+        if path and os.path.exists(path):
+            # text files (pdb/sdf) -> read as text
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+    except Exception:
+        pass
     return ""
 
-def build_media_url(*rel_parts) -> str:
-    """Build absolute media URL based on BASE_URL."""
-    folder_path = "/".join(rel_parts)
-    base_url = settings.BASE_URL.rstrip("/")
-    return f"{base_url}/api/media/{folder_path}"
 
+def _choose_existing(base_root: str, *relpaths) -> Optional[str]:
+    """Return first existing absolute path among relpaths, else None."""
+    for rel in relpaths:
+        p = os.path.join(base_root, rel)
+        if os.path.exists(p):
+            return p
+    return None
 
-# =============================
-# Formatter function
-# =============================
+# ============================================================
+# 1️⃣ FORMATTER FUNCTION
+# ============================================================
 
 def format_dataset_detail(entry: Dict, request=None) -> Dict:
-    """Prepare structured dataset detail response for a single EvoLF entry."""
+    """
+    Prepare structured dataset detail response for a single EvoLF entry.
+    - entry: a dict row (from CSV or DB)
+    - request: optional, used for building absolute URLs
+    Returns keys exactly as README expects (with defaults).
+    """
+    # normalize potential id keys
     evolf_id = entry.get("EvOlf_ID") or entry.get("EvOlf ID") or entry.get("evolfId") or entry.get("EvOlf")
     if not evolf_id:
         return {"error": "Missing EvOlf_ID"}
 
-    # ---- Read structure files ----
-    pdb_candidates = [("pdb_files", f"{evolf_id}.pdb"), ("pdf_files", f"{evolf_id}.pdb")]
-    pdb_path = None
-    for cand in pdb_candidates:
-        if file_exists(*cand):
-            pdb_path = cand
-            break
+    # base paths (your MEDIA_ROOT is core/management in your setup)
+    media_root = settings.MEDIA_ROOT
+    # allow both "pdb_files" and possible "pdf_files" typo
+    pdb_rel_candidates = [os.path.join("pdb_files", f"{evolf_id}.pdb"),
+                          os.path.join("pdf_files", f"{evolf_id}.pdb")]
+    sdf_rel = os.path.join("sdf_files", f"{evolf_id}.sdf")
+    img_rel = os.path.join("smiles_2d", f"{evolf_id}.png")
 
-    sdf_path = ("sdf_files", f"{evolf_id}.sdf") if file_exists("sdf_files", f"{evolf_id}.sdf") else None
-    img_path = ("smiles_2d", f"{evolf_id}.png") if file_exists("smiles_2d", f"{evolf_id}.png") else None
+    pdb_path = _choose_existing(media_root, *pdb_rel_candidates)
+    sdf_path = os.path.join(media_root, sdf_rel)
+    img_path = os.path.join(media_root, img_rel)
 
-    pdb_text = read_media_file(*pdb_path) if pdb_path else ""
-    sdf_text = read_media_file(*sdf_path) if sdf_path else ""
-    img_text = read_media_file(*img_path) if img_path else ""
+    pdb_text = read_file_safe(pdb_path) if pdb_path else ""
+    sdf_text = read_file_safe(sdf_path) if os.path.exists(sdf_path) else ""
 
-    # ---- Build URLs (request-independent) ----
-    structure2d_url = build_media_url(*img_path) if img_path else ""
-    structure3d_url = build_media_url(*pdb_path) if pdb_path else ""
-    sdf_file_url   = build_media_url(*sdf_path) if sdf_path else ""
+    # build absolute URL helper (if request provided)
+    def build_url(folder: str, filename: str) -> str:
+        if not request:
+            return ""  # no request -> leave empty (frontend can use relative paths if needed)
+        media_url = settings.MEDIA_URL if settings.MEDIA_URL.endswith("/") else settings.MEDIA_URL + "/"
+        # ensure we don't duplicate slashes badly
+        return request.build_absolute_uri(f"{media_url}{folder}/{filename}")
 
-    # ---- Safe getter for entry fields ----
+    # safe getter that returns string ("" default)
     def gf(*keys):
         for k in keys:
-            v = entry.get(k)
-            if v is None:
-                continue
-            try:
-                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            if k in entry:
+                v = entry.get(k)
+                if v is None:
                     continue
-            except Exception:
-                pass
-            return v
+                # handle pandas NaN
+                try:
+                    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                        continue
+                except Exception:
+                    pass
+                return v
         return ""
 
-    # ---- Map entry fields ----
+    # fields mapping and defaults to exactly match README
     uniprot_id = gf("UniProt ID", "uniprotId", "UniProt_ID") or ""
     ensembl_id = gf("Ensembl ID", "ensemblId", "Ensembl_ID") or ""
     chembl_id = gf("Ligand ID", "chemblId", "ChEMBL_ID") or ""
     cid_raw = gf("CID", "pubchemId", "PubChem_ID", "cid") or ""
-    cid = str(cid_raw).split(".")[0] if cid_raw else ""
+    cid = str(cid_raw).split(".")[0] if cid_raw != "" else ""
+
     mutation_val = gf("Mutation") or ""
     mutation_status = "Wild-type" if mutation_val == "" else "Mutant"
+
+    # structure URLs (only if files exist)
+    structure2d_url = build_url("smiles_2d", f"{evolf_id}.png") if os.path.exists(img_path) else ""
+    # prefer pdb_files or pdf_files whichever exists
+    chosen_pdb_rel = None
+    for rel in pdb_rel_candidates:
+        if os.path.exists(os.path.join(media_root, rel)):
+            chosen_pdb_rel = rel
+            break
+    structure3d_url = build_url(os.path.dirname(chosen_pdb_rel).replace("\\", "/"), os.path.basename(chosen_pdb_rel)) if chosen_pdb_rel and request else (f"/{chosen_pdb_rel}" if chosen_pdb_rel else "")
+
+    sdf_file_url = build_url("sdf_files", f"{evolf_id}.sdf") if os.path.exists(sdf_path) else ""
 
     formatted = {
         "evolfId": str(evolf_id),
@@ -132,7 +157,6 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "structure2d": structure2d_url or "",
         "image": structure2d_url or "",
         "structure3d": structure3d_url or "",
-        "sdfFileUrl": sdf_file_url or "",
         "expressionSystem": gf("Expression System", "expressionSystem") or "",
         "parameter": gf("Parameter", "parameter") or "",
         "value": str(gf("Value", "value") or ""),
@@ -149,10 +173,6 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
     return formatted
 
 
-# =============================
-# API VIEW
-# =============================
-
 class FetchLocalStructureAPIView(APIView):
     """
     GET /api/structures/<evolf_id>/
@@ -160,33 +180,25 @@ class FetchLocalStructureAPIView(APIView):
     """
     def get(self, request, evolf_id):
         try:
-            # ---- Read files ----
-            pdb_candidates = [("pdb_files", f"{evolf_id}.pdb"), ("pdf_files", f"{evolf_id}.pdb")]
-            pdb_path = None
-            for cand in pdb_candidates:
-                if file_exists(*cand):
-                    pdb_path = cand
-                    break
-            sdf_path = ("sdf_files", f"{evolf_id}.sdf") if file_exists("sdf_files", f"{evolf_id}.sdf") else None
+            media_root = settings.MEDIA_ROOT
+            pdb_rel_candidates = [os.path.join("pdb_files", f"{evolf_id}.pdb"),
+                                  os.path.join("pdf_files", f"{evolf_id}.pdb")]
+            sdf_rel = os.path.join("sdf_files", f"{evolf_id}.sdf")
 
-            pdb_text = read_media_file(*pdb_path) if pdb_path else ""
-            sdf_text = read_media_file(*sdf_path) if sdf_path else ""
+            pdb_abs = _choose_existing(media_root, *pdb_rel_candidates)
+            sdf_abs = os.path.join(media_root, sdf_rel)
+
+            pdb_text = read_file_safe(pdb_abs) if pdb_abs else ""
+            sdf_text = read_file_safe(sdf_abs) if os.path.exists(sdf_abs) else ""
 
             if not pdb_text and not sdf_text:
                 return Response({"error": "No structure files found for this ID."}, status=status.HTTP_404_NOT_FOUND)
 
-            # ---- Build URLs ----
-            pdb_url = build_media_url(*pdb_path) if pdb_path else ""
-            sdf_url = build_media_url(*sdf_path) if sdf_path else ""
-
             return Response({
                 "evolfId": evolf_id,
                 "pdbData": pdb_text,
-                "sdfData": sdf_text,
-                "structure3d": pdb_url,
-                "sdfFileUrl": sdf_url
+                "sdfData": sdf_text
             }, status=status.HTTP_200_OK)
-
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
