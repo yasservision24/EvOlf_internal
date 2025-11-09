@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from django.core.management.base import BaseCommand
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, ElasticsearchException
 from tqdm import tqdm
 from dotenv import load_dotenv  # ✅ to load environment variables from .env
 
@@ -13,32 +13,37 @@ class Command(BaseCommand):
         # --- Load .env variables ---
         load_dotenv()
 
-        # --- Get full path to CSV ---
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        csv_path = os.path.join(base_dir, "..", "enhanced_data_with_species_links.csv")
-        csv_path = os.path.normpath(csv_path)
-        self.stdout.write(self.style.SUCCESS(f"📂 Loading CSV from: {csv_path}"))
-
-        # --- Load CSV ---
-        df = pd.read_csv(csv_path)
-        df = df.fillna("")
-        df.rename(columns=lambda x: x.strip().replace(" ", "_"), inplace=True)
-
         # --- Get Elasticsearch credentials from environment ---
         es_user = os.getenv("ELASTIC_USERNAME", "elastic")
         es_pass = os.getenv("ELASTIC_PASSWORD")
-        es_host = os.getenv("ELASTIC_HOST", "http://localhost:9200")
+        es_host = os.getenv("ELASTIC_HOST", "https://localhost:9200")  # use https
 
         if not es_pass:
             self.stdout.write(self.style.ERROR("❌ Missing ELASTIC_PASSWORD in environment!"))
             return
 
         # --- Connect to Elasticsearch ---
-        es = Elasticsearch(
-            es_host,
-            basic_auth=(es_user, es_pass),
-            verify_certs=False,
-        )
+        try:
+            es = Elasticsearch(
+                es_host,
+                basic_auth=(es_user, es_pass),
+                verify_certs=False,  # ignore self-signed SSL certs
+            )
+            # Test connection
+            info = es.info()
+            self.stdout.write(self.style.SUCCESS(f"🔗 Connected to Elasticsearch: {info['cluster_name']} ({info['version']['number']})"))
+        except ElasticsearchException as e:
+            self.stdout.write(self.style.ERROR(f"❌ Could not connect to Elasticsearch: {e}"))
+            return
+
+        # --- Get full path to CSV ---
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.normpath(os.path.join(base_dir, "..", "enhanced_data_with_species_links.csv"))
+        self.stdout.write(self.style.SUCCESS(f"📂 Loading CSV from: {csv_path}"))
+
+        # --- Load CSV ---
+        df = pd.read_csv(csv_path).fillna("")
+        df.rename(columns=lambda x: x.strip().replace(" ", "_"), inplace=True)
 
         index_name = "evolf"
 
@@ -47,7 +52,7 @@ class Command(BaseCommand):
             if es.indices.exists(index=index_name):
                 self.stdout.write(self.style.WARNING(f"🗑️ Deleting old index: {index_name}"))
                 es.indices.delete(index=index_name)
-        except Exception as e:
+        except ElasticsearchException as e:
             self.stdout.write(self.style.WARNING(f"⚠️ Skipping delete (index may not exist): {e}"))
 
         # --- Create index with mapping ---
@@ -66,7 +71,7 @@ class Command(BaseCommand):
         try:
             es.indices.create(index=index_name, body=mapping)
             self.stdout.write(self.style.SUCCESS(f"✅ Index '{index_name}' created successfully."))
-        except Exception as e:
+        except ElasticsearchException as e:
             self.stdout.write(self.style.ERROR(f"❌ Failed to create index: {e}"))
             return
 
@@ -89,8 +94,7 @@ class Command(BaseCommand):
             }
             try:
                 es.index(index=index_name, document=doc)
-            except Exception as e:
+            except ElasticsearchException as e:
                 self.stdout.write(self.style.ERROR(f"⚠️ Failed to index row: {e}"))
-
 
         self.stdout.write(self.style.SUCCESS("🎯 All documents indexed successfully into Elasticsearch!"))
