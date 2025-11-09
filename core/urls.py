@@ -24,5 +24,3 @@ urlpatterns = [
     path('dataset/export/<str:evolfId>/', DownloadByEvolfId.as_view(), name='download_by_evolf'),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -18,10 +18,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 
-# -------------------------------
-# Dynamic Base URL
-# -------------------------------
-BASE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
+
 
 # -------------------------------
 # Static & Media Files
@@ -29,8 +26,10 @@ BASE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-MEDIA_URL = f"{BASE_URL}/api/media/"   # dynamic according to BASE_URL
+
+
 MEDIA_ROOT = BASE_DIR / 'EvOlf_internal/core/management'
+MEDIA_URL = '/media/'   # Use relative URL here
 
 
 # -------------------------------
