@@ -186,9 +186,9 @@ class DatasetListAPIView(APIView):
 
         # --- Step 6: Filter Options ---
         filter_options = {
-            "uniqueClasses": global_stats["uniqueClasses"],
-            "uniqueSpecies": global_stats["uniqueSpecies"],
-            "uniqueMutationTypes": global_stats["uniqueMutationTypes"],
+            "uniqueClasses": statistics["uniqueClasses"],
+            "uniqueSpecies": statistics["uniqueSpecies"],
+            "uniqueMutationTypes": statistics["uniqueMutationTypes"],
         }
 
         pagination_info = {
@@ -197,13 +197,13 @@ class DatasetListAPIView(APIView):
             "totalItems": total_rows ,
             "itemsPerPage": limit,
             }
-        global_stats.update({"totalRows": total_rows})
+        statistics.update({"totalRows": total_rows})
 
                         
         return Response({
             "data": serializer.data,
             "pagination": pagination_info,
-            "statistics": global_stats,
+            "statistics": statistics,
             "filterOptions": filter_options,
             "all_evolf_ids": [obj.EvOlf_ID for obj in qs],
         })
