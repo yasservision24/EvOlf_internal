@@ -9,7 +9,7 @@ load_dotenv()
 # Project Base
 # -------------------------------
 CURRENT_FILE = Path(__file__).resolve()
-BASE_DIR = CURRENT_FILE.parent.parent.parent.parent  # project root
+BASE_DIR = CURRENT_FILE.parent.parent.parent  # project root
 
 # -------------------------------
 # Security & Debug
