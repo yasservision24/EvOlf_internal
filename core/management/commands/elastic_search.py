@@ -3,17 +3,20 @@ import pandas as pd
 from django.core.management.base import BaseCommand
 from elasticsearch import Elasticsearch
 from tqdm import tqdm
+from dotenv import load_dotenv  # ✅ to load environment variables from .env
 
 
 class Command(BaseCommand):
     help = "Load enhanced_data_with_species_links.csv into Elasticsearch."
 
     def handle(self, *args, **options):
-        # --- Get full path to CSV (portable across OS) ---
+        # --- Load .env variables ---
+        load_dotenv()
+
+        # --- Get full path to CSV ---
         base_dir = os.path.dirname(os.path.abspath(__file__))
         csv_path = os.path.join(base_dir, "..", "enhanced_data_with_species_links.csv")
         csv_path = os.path.normpath(csv_path)
-
         self.stdout.write(self.style.SUCCESS(f"📂 Loading CSV from: {csv_path}"))
 
         # --- Load CSV ---
@@ -21,24 +24,33 @@ class Command(BaseCommand):
         df = df.fillna("")
         df.rename(columns=lambda x: x.strip().replace(" ", "_"), inplace=True)
 
+        # --- Get Elasticsearch credentials from environment ---
+        es_user = os.getenv("ELASTIC_USERNAME", "elastic")
+        es_pass = os.getenv("ELASTIC_PASSWORD")
+        es_host = os.getenv("ELASTIC_HOST", "http://localhost:9200")
+
+        if not es_pass:
+            self.stdout.write(self.style.ERROR("❌ Missing ELASTIC_PASSWORD in environment!"))
+            return
+
         # --- Connect to Elasticsearch ---
         es = Elasticsearch(
-            "http://localhost:9200",
-            basic_auth=("elastic", "HSoMIJHnTnrIiueNgCP2"),
-            verify_certs=False,  # OK for localhost + self-signed
+            es_host,
+            basic_auth=(es_user, es_pass),
+            verify_certs=False,
         )
 
         index_name = "evolf"
 
         # --- Delete old index if it exists ---
         try:
-            if es.indices.exists(name=index_name):  # ✅ ES 8.x uses `name=`
+            if es.indices.exists(index=index_name):
                 self.stdout.write(self.style.WARNING(f"🗑️ Deleting old index: {index_name}"))
                 es.indices.delete(index=index_name)
         except Exception as e:
             self.stdout.write(self.style.WARNING(f"⚠️ Skipping delete (index may not exist): {e}"))
 
-        # --- Create index with proper mapping ---
+        # --- Create index with mapping ---
         mapping = {
             "mappings": {
                 "properties": {
@@ -46,7 +58,7 @@ class Command(BaseCommand):
                     "Receptor": {"type": "text"},
                     "Ligand": {"type": "text"},
                     "Species": {"type": "keyword"},
-                    "suggest": {"type": "completion"}
+                    "suggest": {"type": "completion"},
                 }
             }
         }
@@ -79,5 +91,6 @@ class Command(BaseCommand):
                 es.index(index=index_name, document=doc)
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"⚠️ Failed to index row: {e}"))
+
 
         self.stdout.write(self.style.SUCCESS("🎯 All documents indexed successfully into Elasticsearch!"))
