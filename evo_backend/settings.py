@@ -139,7 +139,17 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'core', 'management')
+# settings.py
+
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# URL that will serve the media files (doesn't need domain)
+# settings.py
+MEDIA_URL = '/api/media/'  # prepend 'api/' to media URL
+MEDIA_ROOT = BASE_DIR / 'media'  # filesystem path to store media files
+
 
 
