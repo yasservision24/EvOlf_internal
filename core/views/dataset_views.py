@@ -446,6 +446,7 @@ class DownloadByEvolfId(APIView):
         base_dir = settings.MEDIA_ROOT
         files_to_zip = []
 
+        # Paths for PDB, SDF, and image files
         paths = {
             "pdb": os.path.join(base_dir, 'pdb_files', f'{evolfId}.pdb'),
             "sdf": os.path.join(base_dir, 'sdf_files', f'{evolfId}.sdf'),
@@ -456,15 +457,52 @@ class DownloadByEvolfId(APIView):
             if os.path.exists(p):
                 files_to_zip.append(p)
 
+        # If no files exist, we still proceed because we'll add CSV row
         if not files_to_zip:
-            return JsonResponse({"error": "No files found for given EvOlf ID"}, status=404)
+            files_to_zip = []
 
+        # 🧠 Step 1: Fetch row data for this EvOlf ID
+        try:
+            csv_path = os.path.join(
+                settings.BASE_DIR,
+                "EvOlf_internal", "core", "management",
+                "enhanced_data_with_species_links.csv"
+            )
+            df = pd.read_csv(csv_path)
+            id_col = "EvOlf ID" if "EvOlf ID" in df.columns else "EvOlf_ID"
+            row_df = df[df[id_col] == evolfId]
+        except Exception as e:
+            row_df = pd.DataFrame()
+            print("Error fetching row data:", e)
+
+        # 🧠 Step 2: Prepare ZIP
         zip_filename = f"{evolfId}_data.zip"
         zip_path = os.path.join(base_dir, zip_filename)
 
-        with zipfile.ZipFile(zip_path, 'w') as zipf:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Add files if available
             for f in files_to_zip:
                 zipf.write(f, os.path.basename(f))
 
+            # 🧠 Step 3: Add CSV row if available
+            if not row_df.empty:
+                csv_buffer = io.StringIO()
+                row_df.to_csv(csv_buffer, index=False)
+                zipf.writestr(f"{evolfId}_data.csv", csv_buffer.getvalue())
+            else:
+                zipf.writestr("note.txt", f"No matching row found for {evolfId}")
+
+            # 🧠 Step 4: Add README / Metadata
+            metadata = {
+                "EvOlf_ID": evolfId,
+                "exportDate": datetime.datetime.utcnow().isoformat() + "Z",
+                "containsFiles": [os.path.basename(f) for f in files_to_zip],
+                "containsCSV": not row_df.empty,
+                "version": "1.1"
+            }
+            zipf.writestr("metadata.json", json.dumps(metadata, indent=2))
+            zipf.writestr("README.txt", f"All available files and data for {evolfId}.")
+
+        # 🧠 Step 5: Return the ZIP as a downloadable file
         response = FileResponse(open(zip_path, 'rb'), as_attachment=True, filename=zip_filename)
         return response
