@@ -19,6 +19,16 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 
 
+# -------------------------------
+# Docker configerations from .env 
+# -------------------------------
+
+PREDICT_DOCKER_URL = os.getenv("PREDICT_DOCKER_URL", "")
+JOB_DATA_DIR = os.getenv("JOB_DATA_DIR", "/data")
+MAX_SMILES_LIMIT = int(os.getenv("MAX_SMILES_LIMIT", 10))
+ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "1") == "1"
+DEBUG_LOG = os.getenv("DEBUG_LOG", "0") == "1"
+
 
 # -------------------------------
 # Static & Media Files
