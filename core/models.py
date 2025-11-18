@@ -1,7 +1,6 @@
 from django.db import models
 
 # Create your models here.
-
 class EvOlf(models.Model):
     EvOlf_ID = models.CharField(max_length=100, null=True, blank=True)
     Class = models.CharField(max_length=100, null=True, blank=True)
@@ -31,16 +30,10 @@ class EvOlf(models.Model):
     Model = models.CharField(max_length=200, null=True, blank=True)
     Image = models.URLField(null=True, blank=True)
     Structure_3D = models.URLField(null=True, blank=True)
-    UniProt_Link = models.URLField(null=True, blank=True)
-    ChEMBL_Link = models.URLField(null=True, blank=True)
     PubChem_Link = models.URLField(null=True, blank=True)
-    Ensembl_ID = models.CharField(max_length=100, null=True, blank=True)
-    Ensembl_Link = models.URLField(null=True, blank=True)
-    Comment = models.TextField(null=True, blank=True)
-    pdb_data = models.TextField(null=True, blank=True)
-    sdf_data = models.TextField(null=True, blank=True)
-    image_base64 = models.TextField(null=True, blank=True)
-
+    Source_Links = models.TextField(null=True, blank=True)
+    UniProt_Link = models.URLField(null=True, blank=True)
+    Comments = models.TextField(null=True, blank=True)
 
     def __str__(self):
-        return self.Evolf or str(self.id)
+        return self.EvOlf_ID or str(self.id)
