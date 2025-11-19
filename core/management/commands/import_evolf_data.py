@@ -13,12 +13,12 @@ class Command(BaseCommand):
         self.stdout.write(self.style.NOTICE(f"📂 Loading data from {csv_path}..."))
         
         df = pd.read_csv(csv_path)
-        df.fillna("", inplace=True)  # replace NaNs with empty strings for safety
+        df.fillna("", inplace=True)
 
-        # Optional: Show how many rows
         self.stdout.write(self.style.NOTICE(f"🔢 Total rows: {len(df)}"))
 
         objects = []
+
         for _, row in df.iterrows():
             obj = EvOlf(
                 EvOlf_ID=row.get("EvOlf ID", ""),
@@ -47,21 +47,20 @@ class Command(BaseCommand):
                 Unit=row.get("Unit", ""),
                 Source=row.get("Source", ""),
                 Model=row.get("Model", ""),
-                Image=row.get("Image", ""),
-                Structure_3D=row.get("3d Structure", ""),
-                UniProt_Link=row.get("UniProt Link", ""),
-                ChEMBL_Link=row.get("ChEMBL Link", ""),
-                PubChem_Link=row.get("PubChem Link", ""),
-                Ensembl_ID=row.get("Ensembl ID", ""),
-                Ensembl_Link=row.get("Ensembl Link", ""),
-                Comment=row.get("Comment", "")
+                Image=row.get("Image", ""),                      # URL
+                Structure_3D=row.get("3d Structure", ""),        # URL
+                PubChem_Link=row.get("PubChem_Link", ""),        # URL
+                Source_Links=row.get("Source_Links", ""),        # Text
+                UniProt_Link=row.get("UniProt_Link", ""),        # URL
+
+                Comments=""  # CSV does NOT have this column → set empty
             )
             objects.append(obj)
 
-        # Bulk insert in batches (faster)
         EvOlf.objects.bulk_create(objects, batch_size=500)
 
-        self.stdout.write(self.style.SUCCESS(f"✅ Successfully imported {len(objects)} records into PostgreSQL!"))
-
+        self.stdout.write(
+            self.style.SUCCESS(f"✅ Successfully imported {len(objects)} records into PostgreSQL!")
+        )
 
 #python manage.py import_evolf_data core/management/evolf_data.csv
