@@ -8,7 +8,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from core.views.dataset_views import FetchDatasetDetails, DownloadByEvolfId
 from core.views.prediction_views import SmilesPredictionAPIView
-from core.views.job_status_views import JobStatusAPIView
+from core.views.job_status_views import JobStatusAPIView,DownloadOutputAPIView
 
 
 
@@ -29,5 +29,6 @@ urlpatterns = [
     path("predict/smiles/", SmilesPredictionAPIView.as_view()),
     # path("predict/csv/", CSVPredictionAPIView.as_view()),
     path("predict/job/<str:job_id>/", JobStatusAPIView.as_view(), name="job-status"),
+    path("predict/download/<str:job_id>/", DownloadOutputAPIView.as_view(), name="job-download"),
 ]
 
