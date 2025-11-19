@@ -1,6 +1,8 @@
-import os
 import uuid
-import json
+import csv
+import io
+import requests
+
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,140 +11,171 @@ from rest_framework import status
 from core.services.job_scheduler import schedule_job
 
 PREDICT_DOCKER_URL = settings.PREDICT_DOCKER_URL
-BASE_DATA_DIR = settings.JOB_DATA_DIR
 MAX_LIMIT = getattr(settings, "MAX_SMILES_LIMIT", 1)
-ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
 DEBUG_LOG = getattr(settings, "DEBUG_LOG", False)
+ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
 
 
 class SmilesPredictionAPIView(APIView):
     """
-    Accepts either:
-      - { "smiles": ["SMILES"] }   # preferred
-    or
-      - { "receptor": {"sequence": "...", "name": "..."}, "ligands": [{"smiles": "...", "name": "..."}] }
-
-    Backend ALWAYS creates the job_id (uuid4) — clients MUST NOT provide job_id.
+    - No disk writes
+    - CSV generated in memory and named {job_id}.csv
+    - Sends job_id to pipeline
+    - Does not return pipeline results — only job_id + message
     """
 
     def post(self, request):
         payload = request.data or {}
 
-        # -------------------------
-        # 1) Create server-side job id and folders
-        # -------------------------
+        # 1) Generate job_id
         job_id = str(uuid.uuid4())
-        job_base_dir = os.path.join(BASE_DATA_DIR, job_id)
-        input_dir = os.path.join(job_base_dir, "input")
 
-        try:
-            os.makedirs(input_dir, exist_ok=True)
-        except Exception as e:
-            if DEBUG_LOG:
-                print(f"[SMILES] Error creating directories for job {job_id}: {e}")
-            return Response({"error": "Failed to create job directories."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # 2) Normalize ligand inputs
+        smiles_list = []
+        lig_meta_list = []
 
-        # -------------------------
-        # 2) Persist raw payload for audit (best-effort; don't fail request on logging error)
-        # -------------------------
-        try:
-            with open(os.path.join(input_dir, "raw_request.json"), "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False, indent=2)
-        except Exception as e:
-            if DEBUG_LOG:
-                print(f"[SMILES] Warning: failed to write raw_request.json for job {job_id}: {e}")
-
-        # -------------------------
-        # 3) Normalize input to a single smiles_list (list[str]) — require exactly 1 SMILES
-        # -------------------------
-        smiles_list = None
-
-        # Case A: explicit "smiles" key (preferred)
         if "smiles" in payload:
-            s = payload.get("smiles")
-            if not isinstance(s, list):
-                return Response({"error": "'smiles' must be an array of SMILES strings."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if MAX_LIMIT is not None and len(s) > MAX_LIMIT:
-                return Response({"error": f"Exceeded maximum allowed SMILES ({MAX_LIMIT})."}, status=status.HTTP_400_BAD_REQUEST)
-
-            smiles_list = [str(x).strip() for x in s if str(x).strip()]
-
-        # Case B: legacy ligands structure
+            incoming = payload.get("smiles", [])
+            if not isinstance(incoming, list):
+                return Response({"error": "'smiles' must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+            if MAX_LIMIT and len(incoming) > MAX_LIMIT:
+                return Response({"error": f"Max {MAX_LIMIT} SMILES allowed"}, status=status.HTTP_400_BAD_REQUEST)
+            for s in incoming:
+                s = str(s).strip()
+                if not s:
+                    return Response({"error": "Empty SMILES provided"}, status=status.HTTP_400_BAD_REQUEST)
+                smiles_list.append(s)
+                lig_meta_list.append({})
         elif "ligands" in payload:
             ligs = payload.get("ligands")
-            if not isinstance(ligs, list) or len(ligs) == 0:
-                return Response({"error": "'ligands' must be a non-empty array."}, status=status.HTTP_400_BAD_REQUEST)
-
-            first = ligs[0]
-            if isinstance(first, dict) and "smiles" in first:
-                s = first.get("smiles")
-                if not s or not str(s).strip():
-                    return Response({"error": "Ligand 'smiles' is empty."}, status=status.HTTP_400_BAD_REQUEST)
-                smiles_list = [str(s).strip()]
-            else:
-                if isinstance(first, str) and first.strip():
-                    smiles_list = [first.strip()]
+            if not isinstance(ligs, list) or not ligs:
+                return Response({"error": "'ligands' must be a non-empty list"}, status=status.HTTP_400_BAD_REQUEST)
+            if MAX_LIMIT and len(ligs) > MAX_LIMIT:
+                return Response({"error": f"Max {MAX_LIMIT} ligands allowed"}, status=status.HTTP_400_BAD_REQUEST)
+            for lig in ligs:
+                if isinstance(lig, dict):
+                    s = str(lig.get("smiles", "")).strip()
+                    if not s:
+                        return Response({"error": "Ligand SMILES empty"}, status=status.HTTP_400_BAD_REQUEST)
+                    smiles_list.append(s)
+                    lig_meta_list.append({"name": lig.get("name"), "id": lig.get("id")})
+                elif isinstance(lig, str) and lig.strip():
+                    smiles_list.append(lig.strip())
+                    lig_meta_list.append({})
                 else:
-                    return Response({"error": "Failed to parse ligand smiles."}, status=status.HTTP_400_BAD_REQUEST)
-
+                    return Response({"error": "Invalid ligand format"}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            return Response({"error": "Invalid payload. Provide 'smiles' array or 'ligands' list."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Provide 'smiles' list or 'ligands' list"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate final list (exactly one SMILES required by server)
-        if not smiles_list or len(smiles_list) != 1:
-            return Response({"error": "SMILES list must be a JSON array containing exactly 1 SMILES."}, status=status.HTTP_400_BAD_REQUEST)
+        if not smiles_list:
+            return Response({"error": "No valid SMILES found"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # -------------------------
-        # 4) Save receptor (optional) and smiles file
-        # -------------------------
+        if MAX_LIMIT == 1 and len(smiles_list) != 1:
+            return Response({"error": "Exactly 1 SMILES required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3) Receptor (optional)
         receptor = payload.get("receptor")
-        if receptor and isinstance(receptor, dict):
+        receptor_seq = None
+        if isinstance(receptor, dict):
             seq = receptor.get("sequence")
             if seq and isinstance(seq, str) and seq.strip():
-                try:
-                    with open(os.path.join(input_dir, "receptor.fasta"), "w", encoding="utf-8") as fh:
-                        fh.write(seq)
-                except Exception as e:
-                    if DEBUG_LOG:
-                        print(f"[SMILES] Warning: failed to write receptor.fasta for job {job_id}: {e}")
+                receptor_seq = seq.strip()
 
-            # receptor metadata (best-effort)
-            try:
-                with open(os.path.join(input_dir, "receptor_meta.json"), "w", encoding="utf-8") as fh:
-                    json.dump({"name": receptor.get("name")}, fh, ensure_ascii=False, indent=2)
-            except Exception as e:
-                if DEBUG_LOG:
-                    print(f"[SMILES] Warning: failed to write receptor_meta.json for job {job_id}: {e}")
+        # 4) Build CSV in-memory
+        lig_col = "lig_smiles"
+        rec_col = "rec_seq"
 
-        # Save smiles.json (required)
+        extra_cols = []
+        if any(m.get("name") for m in lig_meta_list):
+            extra_cols.append("ligand_name")
+        if any(m.get("id") for m in lig_meta_list):
+            extra_cols.append("ligand_id")
+
+        header = [lig_col] + ([rec_col] if receptor_seq else []) + extra_cols
+
+        csv_buffer = io.StringIO()
+        writer = csv.writer(csv_buffer, lineterminator="\n")
+        writer.writerow(header)
+        for idx, smi in enumerate(smiles_list):
+            row = [smi]
+            if receptor_seq:
+                row.append(receptor_seq)
+            meta = lig_meta_list[idx]
+            if "ligand_name" in extra_cols:
+                row.append(meta.get("name") or "")
+            if "ligand_id" in extra_cols:
+                row.append(meta.get("id") or "")
+            writer.writerow(row)
+
+        csv_bytes = csv_buffer.getvalue().encode("utf-8")
+        csv_buffer.close()
+
+        csv_filename = f"{job_id}.csv"
+
+        # 5) Send to pipeline
+        if not PREDICT_DOCKER_URL:
+            return Response({"error": "Pipeline URL not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        pipeline_url = PREDICT_DOCKER_URL.rstrip("/") + "/pipeline/run"
+
+        data = {
+            "job_id": job_id,
+            "lig_smiles_col": lig_col,
+            "rec_seq_col": rec_col if receptor_seq else "",
+            "lig_id_col": "ligand_id" if "ligand_id" in extra_cols else "",
+            "rec_id_col": "",
+            "lr_id_col": "",
+        }
+
+        files = {"input_file": (csv_filename, io.BytesIO(csv_bytes), "text/csv")}
+
+        if DEBUG_LOG:
+            print(f"[SMILES] Sending job {job_id} to pipeline at {pipeline_url} (rows={len(smiles_list)})")
+
         try:
-            with open(os.path.join(input_dir, "smiles.json"), "w", encoding="utf-8") as f:
-                json.dump({"smiles": smiles_list}, f, ensure_ascii=False)
-        except Exception as e:
+            resp = requests.post(pipeline_url, data=data, files=files, timeout=30)
+        except requests.RequestException as e:
             if DEBUG_LOG:
-                print(f"[SMILES] Error writing smiles.json for job {job_id}: {e}")
-            return Response({"error": "Failed to write smiles input file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                print(f"[SMILES] Pipeline POST failed for job {job_id}: {e}")
+            # ensure buffer closed
+            try:
+                files["input_file"][1].close()
+            except Exception:
+                pass
+            return Response({"error": "Failed to contact prediction pipeline."}, status=status.HTTP_502_BAD_GATEWAY)
 
-        # -------------------------
-        # 5) Submit / schedule job
-        # -------------------------
-        def execute(job_id_local):
-            # Replace with real execution dispatch (e.g., send to prediction service or container)
+        # close buffer
+        try:
+            files["input_file"][1].close()
+        except Exception:
+            pass
+
+        # Treat 2xx as accepted — we won't return pipeline results
+        if not (200 <= resp.status_code < 300):
+            # try to get error body for debugging only
+            err_body = None
+            try:
+                err_body = resp.json()
+            except Exception:
+                err_body = resp.text
             if DEBUG_LOG:
-                print(f"[EXECUTE] Running job: {job_id_local}")
-            return
+                print(f"[SMILES] Pipeline returned non-2xx for job {job_id}: {resp.status_code} - {err_body}")
+            return Response({"error": "Pipeline rejected job submission", "details": err_body}, status=status.HTTP_502_BAD_GATEWAY)
 
+        # 6) Optionally schedule local bookkeeping via scheduler (lightweight)
         if ENABLE_SCHEDULER:
-            # schedule_job should accept job_id and callable
-            schedule_job(job_id, execute)
-        else:
-            execute(job_id)
+            def execute_local(jid):
+                if DEBUG_LOG:
+                    print(f"[SCHEDULER] Job {jid} enqueued for local bookkeeping.")
+                # small, safe tasks only: DB updates, notifications, logging, etc.
+                return
+            schedule_job(job_id, execute_local)
 
-        # -------------------------
-        # 6) Success response (server-generated job_id only)
-        # -------------------------
-        return Response({"job_id": job_id, "message": "Job submitted successfully."}, status=status.HTTP_200_OK)
+        # 7) Return ONLY job_id and message
+        return Response(
+            {"job_id": job_id, "message": "Job submitted to pipeline."},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 # class CSVPredictionAPIView(APIView):
 
