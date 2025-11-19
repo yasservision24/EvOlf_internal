@@ -11,12 +11,22 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         csv_path = options['csv_path']
         self.stdout.write(self.style.NOTICE(f"📂 Loading data from {csv_path}..."))
-        
+
         df = pd.read_csv(csv_path)
         df.fillna("", inplace=True)
 
         self.stdout.write(self.style.NOTICE(f"🔢 Total rows: {len(df)}"))
 
+        # -------------------------------------------------
+        # 1️⃣ REMOVE OLD DATA
+        # -------------------------------------------------
+        self.stdout.write(self.style.WARNING("🗑️ Deleting old EvOlf data..."))
+        EvOlf.objects.all().delete()
+        self.stdout.write(self.style.SUCCESS("✔️ Old data deleted."))
+
+        # -------------------------------------------------
+        # 2️⃣ IMPORT NEW DATA
+        # -------------------------------------------------
         objects = []
 
         for _, row in df.iterrows():
@@ -47,20 +57,19 @@ class Command(BaseCommand):
                 Unit=row.get("Unit", ""),
                 Source=row.get("Source", ""),
                 Model=row.get("Model", ""),
-                Image=row.get("Image", ""),                      # URL
-                Structure_3D=row.get("3d Structure", ""),        # URL
-                PubChem_Link=row.get("PubChem_Link", ""),        # URL
-                Source_Links=row.get("Source_Links", ""),        # Text
-                UniProt_Link=row.get("UniProt_Link", ""),        # URL
-
-                Comments=""  # CSV does NOT have this column → set empty
+                Image=row.get("Image", ""),
+                Structure_3D=row.get("3d Structure", ""),
+                PubChem_Link=row.get("PubChem_Link", ""),
+                Source_Links=row.get("Source_Links", ""),
+                UniProt_Link=row.get("UniProt_Link", ""),
+                Comments=""
             )
             objects.append(obj)
 
         EvOlf.objects.bulk_create(objects, batch_size=500)
 
         self.stdout.write(
-            self.style.SUCCESS(f"✅ Successfully imported {len(objects)} records into PostgreSQL!")
+            self.style.SUCCESS(f"✅ Successfully imported {len(objects)} new records into PostgreSQL!")
         )
 
 #python manage.py import_evolf_data core/management/evolf_data.csv
