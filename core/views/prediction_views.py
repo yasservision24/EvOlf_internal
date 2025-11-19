@@ -1,3 +1,4 @@
+
 import os
 import uuid
 import csv
@@ -225,7 +226,9 @@ class SmilesPredictionAPIView(APIView):
             schedule_job(job_id, execute_local)
 
         # 8) Response
-        return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status
+        return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status)
+
+
 # class CSVPredictionAPIView(APIView):
 
 #     def post(self, request):
