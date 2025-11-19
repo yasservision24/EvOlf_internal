@@ -1,8 +1,8 @@
-
 import os
 import uuid
 import csv
 import io
+import re
 import requests
 
 from django.conf import settings
@@ -25,14 +25,37 @@ DEFAULT_REC_ID_COL = "TempRecID"
 DEFAULT_LR_ID_COL = "ID"
 
 
+def _sanitize_identifier(s: str) -> str:
+    """
+    Make a safe identifier from a name: keep alphanumerics, dash, underscore.
+    Collapse whitespace to underscore, lowercase.
+    """
+    if not s:
+        return ""
+    s = s.strip().lower()
+    s = re.sub(r"\s+", "_", s)
+    # keep only a-z0-9_- characters
+    s = re.sub(r"[^a-z0-9_-]", "", s)
+    return s or ""
+
+
 class SmilesPredictionAPIView(APIView):
     """
-    Accepts JSON-formatted request bodies (or form fields) — NOT uploaded files.
-    Builds CSV with column order:
+    Accepts JSON-formatted request bodies (no file uploads).
+    Expect payload:
+      {
+        "receptor": { "sequence": "<string>", "name": "<optional>", "id": "<optional>" },
+        "ligand":  { "smiles": "<string>", "name": "<optional>", "id": "<optional>" },
+        optional overrides for column names: lig_smiles_col, rec_seq_col, lig_id_col, rec_id_col, lr_id_col
+      }
+
+    Builds CSV with order:
       ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID
-    Auto-fill:
-      - missing ID -> "1"
-      - missing Temp_Ligand_ID -> "lig_1"
+
+    Auto-generate identifiers when missing:
+      - ID -> "1" (unless provided via top-level 'id' or lr_id_col)
+      - Temp_Ligand_ID -> ligand.id OR sanitized ligand.name OR "lig_1"
+      - TempRecID -> receptor.id OR sanitized receptor.name OR "TRec1"
     """
 
     def post(self, request):
@@ -40,8 +63,10 @@ class SmilesPredictionAPIView(APIView):
 
         # Reject any file uploads
         if request.FILES:
-            return Response({"error": "File uploads are not allowed. Send JSON body or form fields (no files)."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "File uploads are not allowed. Send JSON body or form fields (no files)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Allow overrides for column names that will be sent to pipeline
         lig_col_name = payload.get("lig_smiles_col", DEFAULT_LIG_COL)
@@ -50,43 +75,80 @@ class SmilesPredictionAPIView(APIView):
         rec_id_col_name = payload.get("rec_id_col", DEFAULT_REC_ID_COL)
         lr_id_col_name = payload.get("lr_id_col", DEFAULT_LR_ID_COL)
 
-        # Read the single-row fields from JSON/form. These must be strings (not lists).
-        smiles = payload.get("smiles")
-        mutated_seq = payload.get("mutated_sequence") or payload.get(rec_col_name) or ""
-        temp_lig_id = payload.get("temp_ligand_id") or payload.get(lig_id_col_name) or ""
-        temp_rec_id = payload.get("temp_rec_id") or payload.get(rec_id_col_name) or ""
-        lr_id_value = payload.get("id") or payload.get(lr_id_col_name) or ""
+        # Expect receptor (object) and ligand (object) in payload
+        receptor = payload.get("receptor")
+        ligand = payload.get("ligand") or payload.get("ligands")  # accept singular 'ligand' or mistakenly 'ligands' if frontend sends it
 
-        # Reject array/list inputs — require single string values
-        if isinstance(smiles, (list, tuple)) or isinstance(mutated_seq, (list, tuple)):
-            return Response({"error": "List/array values are not allowed. Send single string values."},
+        # Reject lists/arrays for ligand or receptor
+        if isinstance(ligand, (list, tuple)) or isinstance(receptor, (list, tuple)):
+            return Response(
+                {"error": "Array values are not allowed for 'ligand' or 'receptor'. Send single objects."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(receptor, dict):
+            return Response({"error": "Field 'receptor' must be provided as an object with 'sequence'."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate smiles presence and type
-        if not smiles or not isinstance(smiles, str):
-            return Response({"error": "Field 'smiles' is required and must be a non-empty string."},
+        if not isinstance(ligand, dict):
+            return Response({"error": "Field 'ligand' must be provided as an object with 'smiles'."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Normalize strings (strip)
-        smiles = smiles.strip()
-        mutated_seq = mutated_seq.strip() if isinstance(mutated_seq, str) else ""
-        temp_lig_id = temp_lig_id.strip() if isinstance(temp_lig_id, str) else ""
-        temp_rec_id = temp_rec_id.strip() if isinstance(temp_rec_id, str) else ""
+        # Extract receptor sequence
+        receptor_seq = receptor.get("sequence") or receptor.get("seq") or ""
+        if not receptor_seq or not isinstance(receptor_seq, str) or not receptor_seq.strip():
+            # receptor sequence may be optional in some pipelines; here we allow empty but warn
+            receptor_seq = receptor_seq.strip() if isinstance(receptor_seq, str) else ""
+            # we won't fail — pipeline may accept empty receptor — but log if debug
+            if DEBUG_LOG:
+                print("[SMILES] Warning: receptor.sequence is empty")
+
+        # Extract ligand SMILES and validate
+        ligand_smiles = ligand.get("smiles") or ligand.get("smile") or ""
+        if not ligand_smiles or not isinstance(ligand_smiles, str) or not ligand_smiles.strip():
+            return Response({"error": "Field 'ligand.smiles' is required and must be a non-empty string."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        ligand_smiles = ligand_smiles.strip()
+
+        # Determine lr_id (ID column) - precedence: top-level id -> payload lr_id_value -> none -> default "1"
+        lr_id_value = payload.get("id") or payload.get("lr_id") or payload.get("lr_id_value") or ""
         lr_id_value = lr_id_value.strip() if isinstance(lr_id_value, str) else ""
-
-        # Auto-fill defaults
         if not lr_id_value:
             lr_id_value = "1"
-        if not temp_lig_id:
-            temp_lig_id = "lig_1"
 
-        # Build CSV exactly in the order: ID,Temp_Ligand_ID,SMILES,Mutated_Sequence,TempRecID
+        # Determine Temp_Ligand_ID
+        ligand_id = payload.get("temp_ligand_id") or payload.get(lig_id_col_name) or ligand.get("id") or ""
+        ligand_id = ligand_id.strip() if isinstance(ligand_id, str) else ""
+        if not ligand_id:
+            # try sanitize ligand name
+            ligand_name = ligand.get("name") or payload.get("ligand_name") or ""
+            ligand_name = ligand_name.strip() if isinstance(ligand_name, str) else ""
+            sanitized = _sanitize_identifier(ligand_name)
+            ligand_id = sanitized if sanitized else "lig_1"
+
+        # Determine TempRecID
+        rec_id = payload.get("temp_rec_id") or payload.get(rec_id_col_name) or receptor.get("id") or ""
+        rec_id = rec_id.strip() if isinstance(rec_id, str) else ""
+        if not rec_id:
+            # try sanitize receptor name
+            receptor_name = receptor.get("name") or payload.get("receptor_name") or ""
+            receptor_name = receptor_name.strip() if isinstance(receptor_name, str) else ""
+            sanitized_rec = _sanitize_identifier(receptor_name)
+            rec_id = sanitized_rec if sanitized_rec else "TRec1"
+
+        # Normalize receptor sequence (if it's FASTA, strip header lines)
+        if isinstance(receptor_seq, str) and receptor_seq.strip().startswith(">"):
+            lines = receptor_seq.splitlines()
+            seq_lines = [ln for ln in lines if ln and not ln.startswith(">")]
+            receptor_seq = "".join(seq_lines).strip()
+
+        # Build CSV exactly in the order: ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer, lineterminator="\n")
         header = [lr_id_col_name, lig_id_col_name, lig_col_name, rec_col_name, rec_id_col_name]
         writer.writerow(header)
 
-        row = [lr_id_value, temp_lig_id, smiles, mutated_seq, temp_rec_id]
+        row = [lr_id_value, ligand_id, ligand_smiles, receptor_seq or "", rec_id]
         writer.writerow(row)
 
         csv_bytes = csv_buffer.getvalue().encode("utf-8")
@@ -96,32 +158,21 @@ class SmilesPredictionAPIView(APIView):
         csv_filename = f"{job_id}.csv"
 
         # Save CSV directly under JOB_DATA_DIR/<job_id>/<job_id>.csv (or /tmp fallback)
-        if JOB_DATA_DIR:
-            try:
+        try:
+            if JOB_DATA_DIR:
                 job_dir = os.path.join(JOB_DATA_DIR, job_id)
-                os.makedirs(job_dir, exist_ok=True)
-                csv_path = os.path.join(job_dir, csv_filename)
-                with open(csv_path, "wb") as fh:
-                    fh.write(csv_bytes)
-                if DEBUG_LOG:
-                    print(f"[SMILES] Saved CSV to disk: {csv_path}")
-            except Exception as e:
-                if DEBUG_LOG:
-                    print(f"[SMILES] Error saving CSV to JOB_DATA_DIR for job {job_id}: {e}")
-                return Response({"error": "Failed to save CSV to JOB_DATA_DIR"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        else:
-            tmp_dir = os.path.join("/tmp", "smiles_jobs", job_id)
-            try:
-                os.makedirs(tmp_dir, exist_ok=True)
-                csv_path = os.path.join(tmp_dir, csv_filename)
-                with open(csv_path, "wb") as fh:
-                    fh.write(csv_bytes)
-                if DEBUG_LOG:
-                    print(f"[SMILES] JOB_DATA_DIR not configured - saved CSV to tmp: {csv_path}")
-            except Exception as e:
-                if DEBUG_LOG:
-                    print(f"[SMILES] Failed to save CSV to tmp for job {job_id}: {e}")
-                return Response({"error": "Failed to save CSV to disk"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            else:
+                job_dir = os.path.join("/tmp", "smiles_jobs", job_id)
+            os.makedirs(job_dir, exist_ok=True)
+            csv_path = os.path.join(job_dir, csv_filename)
+            with open(csv_path, "wb") as fh:
+                fh.write(csv_bytes)
+            if DEBUG_LOG:
+                print(f"[SMILES] Saved CSV to disk: {csv_path}")
+        except Exception as e:
+            if DEBUG_LOG:
+                print(f"[SMILES] Error saving CSV to disk for job {job_id}: {e}")
+            return Response({"error": "Failed to save CSV to disk"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Debug preview
         if DEBUG_LOG:
@@ -138,7 +189,7 @@ class SmilesPredictionAPIView(APIView):
         form_data = {
             "job_id": job_id,
             "lig_smiles_col": lig_col_name,
-            "rec_seq_col": rec_col_name if mutated_seq else "",
+            "rec_seq_col": rec_col_name if receptor_seq else "",
             "lig_id_col": lig_id_col_name,
             "rec_id_col": rec_id_col_name,
             "lr_id_col": lr_id_col_name,
