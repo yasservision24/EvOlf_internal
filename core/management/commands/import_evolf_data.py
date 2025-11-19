@@ -20,7 +20,7 @@ class Command(BaseCommand):
 
         objects = []
         for _, row in df.iterrows():
-            obj = Evolf(
+            obj = EvOlf(
                 EvOlf_ID=row.get("EvOlf ID", ""),
                 Class=row.get("Class", ""),
                 Species=row.get("Species", ""),
@@ -59,7 +59,7 @@ class Command(BaseCommand):
             objects.append(obj)
 
         # Bulk insert in batches (faster)
-        Evolf.objects.bulk_create(objects, batch_size=500)
+        EvOlf.objects.bulk_create(objects, batch_size=500)
 
         self.stdout.write(self.style.SUCCESS(f"✅ Successfully imported {len(objects)} records into PostgreSQL!"))
 
