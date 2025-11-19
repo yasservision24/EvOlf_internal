@@ -15,17 +15,32 @@ MAX_LIMIT = getattr(settings, "MAX_SMILES_LIMIT", 1)
 DEBUG_LOG = getattr(settings, "DEBUG_LOG", False)
 ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
 
+# Default column names that match your curl example; change if needed
+DEFAULT_LIG_COL = "SMILES"
+DEFAULT_REC_COL = "Mutated_Sequence"
+DEFAULT_LIG_ID_COL = "Temp_Ligand_ID"
+DEFAULT_REC_ID_COL = "TempRecID"
+DEFAULT_LR_ID_COL = "ID"
+
 
 class SmilesPredictionAPIView(APIView):
     """
-    - No disk writes
-    - CSV generated in memory and named {job_id}.csv
-    - Sends job_id to pipeline
-    - Does not return pipeline results — only job_id + message
+    Builds an in-memory CSV named {job_id}.csv and POSTs it to the pipeline
+    with the form-field names matching your curl example:
+      lig_smiles_col -> column name for SMILES
+      rec_seq_col    -> column name for receptor sequence
+      lig_id_col, rec_id_col, lr_id_col
     """
 
     def post(self, request):
         payload = request.data or {}
+
+        # 0) Optionally accept column-name overrides from payload
+        lig_col_name = payload.get("lig_smiles_col", DEFAULT_LIG_COL)
+        rec_col_name = payload.get("rec_seq_col", DEFAULT_REC_COL)
+        lig_id_col_name = payload.get("lig_id_col", DEFAULT_LIG_ID_COL)
+        rec_id_col_name = payload.get("rec_id_col", DEFAULT_REC_ID_COL)
+        lr_id_col_name = payload.get("lr_id_col", DEFAULT_LR_ID_COL)
 
         # 1) Generate job_id
         job_id = str(uuid.uuid4())
@@ -81,29 +96,33 @@ class SmilesPredictionAPIView(APIView):
             if seq and isinstance(seq, str) and seq.strip():
                 receptor_seq = seq.strip()
 
-        # 4) Build CSV in-memory
-        lig_col = "lig_smiles"
-        rec_col = "rec_seq"
+        # 4) Build CSV in-memory with header names matching the column names
+        #    We put ligand SMILES column first (using lig_col_name), then optional receptor column,
+        #    then optional ligand metadata columns (name, id) if present.
+        header = [lig_col_name]
+        if receptor_seq:
+            header.append(rec_col_name)
 
-        extra_cols = []
-        if any(m.get("name") for m in lig_meta_list):
-            extra_cols.append("ligand_name")
-        if any(m.get("id") for m in lig_meta_list):
-            extra_cols.append("ligand_id")
-
-        header = [lig_col] + ([rec_col] if receptor_seq else []) + extra_cols
+        # include ligand_name / ligand_id columns if any metadata present
+        include_name = any(m.get("name") for m in lig_meta_list)
+        include_id = any(m.get("id") for m in lig_meta_list)
+        if include_name:
+            header.append("ligand_name")
+        if include_id:
+            header.append("ligand_id")
 
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer, lineterminator="\n")
         writer.writerow(header)
+
         for idx, smi in enumerate(smiles_list):
             row = [smi]
             if receptor_seq:
                 row.append(receptor_seq)
-            meta = lig_meta_list[idx]
-            if "ligand_name" in extra_cols:
+            meta = lig_meta_list[idx] if idx < len(lig_meta_list) else {}
+            if include_name:
                 row.append(meta.get("name") or "")
-            if "ligand_id" in extra_cols:
+            if include_id:
                 row.append(meta.get("id") or "")
             writer.writerow(row)
 
@@ -111,50 +130,56 @@ class SmilesPredictionAPIView(APIView):
         csv_buffer.close()
 
         csv_filename = f"{job_id}.csv"
-        
 
+        # debug: preview
+        if DEBUG_LOG:
+            try:
+                print(f"[SMILES] CSV preview:\n{csv_bytes.decode('utf-8')}")
+            except Exception:
+                print("[SMILES] CSV preview: <binary or decode error>")
 
-        # 5) Send to pipeline
+        # 5) Send to pipeline using the exact form fields as your curl
         if not PREDICT_DOCKER_URL:
             return Response({"error": "Pipeline URL not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         pipeline_url = PREDICT_DOCKER_URL.rstrip("/") + "/pipeline/run"
 
+        # Here we map our local column names to the pipeline field names (exact)
         data = {
             "job_id": job_id,
-            "lig_smiles_col": lig_col,
-            "rec_seq_col": rec_col if receptor_seq else "",
-            "lig_id_col": "ligand_id" if "ligand_id" in extra_cols else "",
-            "rec_id_col": "",
-            "lr_id_col": "",
+            "lig_smiles_col": lig_col_name,   # e.g., "SMILES"
+            "rec_seq_col": rec_col_name if receptor_seq else "",
+            "lig_id_col": lig_id_col_name,
+            "rec_id_col": rec_id_col_name,
+            "lr_id_col": lr_id_col_name,
         }
 
-        files = {"input_file": (csv_filename, io.BytesIO(csv_bytes), "text/csv")}
+        # build BytesIO and ensure rewind
+        bio = io.BytesIO(csv_bytes)
+        bio.seek(0)
+        files = {"input_file": (csv_filename, bio, "text/csv")}
 
         if DEBUG_LOG:
-            print(f"[SMILES] Sending job {job_id} to pipeline at {pipeline_url} (rows={len(smiles_list)})")
+            print(f"[SMILES] Posting to pipeline {pipeline_url} job_id={job_id} rows={len(smiles_list)} csv_name={csv_filename}")
+            print(f"[SMILES] form data: {data}")
 
         try:
             resp = requests.post(pipeline_url, data=data, files=files, timeout=30)
         except requests.RequestException as e:
             if DEBUG_LOG:
                 print(f"[SMILES] Pipeline POST failed for job {job_id}: {e}")
-            # ensure buffer closed
             try:
-                files["input_file"][1].close()
+                bio.close()
             except Exception:
                 pass
             return Response({"error": "Failed to contact prediction pipeline."}, status=status.HTTP_502_BAD_GATEWAY)
 
-        # close buffer
         try:
-            files["input_file"][1].close()
+            bio.close()
         except Exception:
             pass
 
-        # Treat 2xx as accepted — we won't return pipeline results
         if not (200 <= resp.status_code < 300):
-            # try to get error body for debugging only
             err_body = None
             try:
                 err_body = resp.json()
@@ -174,10 +199,7 @@ class SmilesPredictionAPIView(APIView):
             schedule_job(job_id, execute_local)
 
         # 7) Return ONLY job_id and message
-        return Response(
-            {"job_id": job_id, "message": "Job submitted to pipeline."},
-            status=status.HTTP_202_ACCEPTED,
-        )
+        return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status.HTTP_202_ACCEPTED)
 
 # class CSVPredictionAPIView(APIView):
 
