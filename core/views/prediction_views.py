@@ -1,8 +1,6 @@
 import os
-import csv
 import uuid
 import json
-import requests
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -10,44 +8,129 @@ from rest_framework import status
 
 from core.services.job_scheduler import schedule_job
 
-
 PREDICT_DOCKER_URL = settings.PREDICT_DOCKER_URL
 BASE_DATA_DIR = settings.JOB_DATA_DIR
-MAX_LIMIT = settings.MAX_SMILES_LIMIT
-ENABLE_SCHEDULER = settings.ENABLE_SCHEDULER
-DEBUG_LOG = settings.DEBUG_LOG
+MAX_LIMIT = getattr(settings, "MAX_SMILES_LIMIT", 1)
+ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
+DEBUG_LOG = getattr(settings, "DEBUG_LOG", False)
 
 
 class SmilesPredictionAPIView(APIView):
+    """
+    Accepts either:
+      - { "smiles": ["SMILES"] }   # preferred
+    or
+      - { "receptor": {"sequence": "...", "name": "..."}, "ligands": [{"smiles": "...", "name": "..."}] }
+    """
 
     def post(self, request):
-        smiles_list = request.data.get("smiles")
+        payload = request.data or {}
 
-        # Validate input
-        if not smiles_list or not isinstance(smiles_list, list):
+        # Save raw request for debugging / traceability
+        # create temporary job-id namespace to write raw request later (we will still create job_id below)
+        # but we can save raw request into a new uuid folder immediately if desired
+        job_id = str(uuid.uuid4())
+        input_dir = os.path.join(BASE_DATA_DIR, job_id, "input")
+        os.makedirs(input_dir, exist_ok=True)
+
+        # persist the raw payload to a file for auditing
+        try:
+            with open(os.path.join(input_dir, "raw_request.json"), "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False, indent=2)
+        except Exception:
+            # don't fail the request for logging errors
+            if DEBUG_LOG:
+                print("[SMILES] Warning: failed to write raw_request.json")
+
+        # Normalize to a single smiles_list: list[str]
+        smiles_list = None
+
+        # Case A: explicit "smiles" key (preferred)
+        if "smiles" in payload:
+            s = payload.get("smiles")
+            if not isinstance(s, list):
+                return Response(
+                    {"error": "'smiles' must be an array of SMILES strings."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # optional: enforce a max limit (MAX_LIMIT)
+            if MAX_LIMIT is not None and len(s) > MAX_LIMIT:
+                return Response(
+                    {"error": f"Exceeded maximum allowed SMILES ({MAX_LIMIT})."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ensure strings and strip whitespace
+            smiles_list = [str(x).strip() for x in s if str(x).strip()]
+
+        # Case B: legacy ligands structure
+        elif "ligands" in payload:
+            ligs = payload.get("ligands")
+            if not isinstance(ligs, list) or len(ligs) == 0:
+                return Response(
+                    {"error": "'ligands' must be a non-empty array."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # only accept first ligand (server rule: exactly 1)
+            first = ligs[0]
+            # if first is an object with 'smiles' field
+            if isinstance(first, dict) and "smiles" in first:
+                s = first.get("smiles")
+                if not s or not str(s).strip():
+                    return Response({"error": "Ligand 'smiles' is empty."}, status=status.HTTP_400_BAD_REQUEST)
+                smiles_list = [str(s).strip()]
+            else:
+                # if ligands was a list of raw strings
+                if isinstance(first, str) and first.strip():
+                    smiles_list = [first.strip()]
+                else:
+                    return Response({"error": "Failed to parse ligand smiles."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Nothing recognized
+        else:
+            return Response(
+                {"error": "Invalid payload. Provide 'smiles' array or 'ligands' list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # final validation: must be exactly one SMILES
+        if not smiles_list or len(smiles_list) != 1:
             return Response(
                 {"error": "SMILES list must be a JSON array containing exactly 1 SMILES."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Only 1 ligand allowed
-        if len(smiles_list) != 1:
-            return Response(
-                {"error": "Only one SMILES is allowed per prediction request."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Optionally store receptor sequence if provided for later use
+        receptor = payload.get("receptor")
+        if receptor and isinstance(receptor, dict):
+            seq = receptor.get("sequence")
+            if seq and isinstance(seq, str) and seq.strip():
+                try:
+                    with open(os.path.join(input_dir, "receptor.fasta"), "w", encoding="utf-8") as fh:
+                        fh.write(seq)
+                except Exception:
+                    if DEBUG_LOG:
+                        print("[SMILES] Warning: failed to write receptor.fasta")
 
-        job_id = str(uuid.uuid4())
-        input_path = f"{BASE_DATA_DIR}/{job_id}/input"
-        os.makedirs(input_path, exist_ok=True)
+            # optionally save receptor metadata
+            try:
+                with open(os.path.join(input_dir, "receptor_meta.json"), "w", encoding="utf-8") as fh:
+                    json.dump({"name": receptor.get("name")}, fh, ensure_ascii=False, indent=2)
+            except Exception:
+                if DEBUG_LOG:
+                    print("[SMILES] Warning: failed to write receptor_meta.json")
 
-        with open(f"{input_path}/smiles.json", "w") as f:
-            json.dump({"smiles": smiles_list}, f)
+        # Save the smiles file for the job (what your current code already did)
+        try:
+            with open(os.path.join(input_dir, "smiles.json"), "w", encoding="utf-8") as f:
+                json.dump({"smiles": smiles_list}, f, ensure_ascii=False)
+        except Exception:
+            return Response({"error": "Failed to write smiles input file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Job execution logic
-        def execute(job_id):
+        # Job execution logic remains the same — use the job id we generated earlier
+        def execute(job_id_local):
             if DEBUG_LOG:
-                print(f"[EXECUTE] Running job: {job_id}")
+                print(f"[EXECUTE] Running job: {job_id_local}")
             return
 
         if ENABLE_SCHEDULER:
@@ -56,14 +139,9 @@ class SmilesPredictionAPIView(APIView):
             execute(job_id)
 
         return Response(
-            {
-                "job_id": job_id,
-                "message": "Job submitted successfully."
-            },
-            status=status.HTTP_200_OK
+            {"job_id": job_id, "message": "Job submitted successfully."},
+            status=status.HTTP_200_OK,
         )
-
-
 
 
 # class CSVPredictionAPIView(APIView):
