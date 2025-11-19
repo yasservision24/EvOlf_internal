@@ -12,13 +12,14 @@ from rest_framework import status
 
 from core.services.job_scheduler import schedule_job
 
-PREDICT_DOCKER_URL = settings.PREDICT_DOCKER_URL
+# Config from settings
+PREDICT_DOCKER_URL = getattr(settings, "PREDICT_DOCKER_URL", None)
 JOB_DATA_DIR = getattr(settings, "JOB_DATA_DIR", None)
 MAX_LIMIT = getattr(settings, "MAX_SMILES_LIMIT", 1)
 DEBUG_LOG = getattr(settings, "DEBUG_LOG", False)
 ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
 
-# Defaults that match your curl example
+# Defaults matching earlier examples
 DEFAULT_LIG_COL = "SMILES"
 DEFAULT_REC_COL = "Mutated_Sequence"
 DEFAULT_LIG_ID_COL = "Temp_Ligand_ID"
@@ -28,68 +29,114 @@ DEFAULT_LR_ID_COL = "ID"
 
 class SmilesPredictionAPIView(APIView):
     """
-    Builds CSV and posts to pipeline with form fields matching your curl.
+    Save CSV under JOB_DATA_DIR/<job_id>/<job_id>.csv with column order:
+      ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID
 
-    CSV will now ALWAYS include the ID columns (ligand id, receptor id, lr id)
-    using the provided column names (or defaults). Name columns are included only
-    if provided in the input.
-
-    Behavior:
-      - header: [lig_col_name, rec_col_name(if receptor), ligand_name(if any), lig_id_col_name, rec_id_col_name, lr_id_col_name]
-      - rows: fill available values; missing ids are empty strings
-      - saves {job_id}.csv to JOB_DATA_DIR if configured
-      - sends multipart POST to pipeline with form fields exactly as curl
+    Accepts:
+      - uploaded CSV: request.FILES['input_file']
+      - OR JSON/form: 'smiles' list or 'ligands' list
+    Optional column name overrides via form fields:
+      lig_smiles_col, rec_seq_col, lig_id_col, rec_id_col, lr_id_col
     """
 
     def post(self, request):
         payload = request.data or {}
 
-        # Allow overrides but default to the curl names
+        # Allow overrides but default to known names
         lig_col_name = payload.get("lig_smiles_col", DEFAULT_LIG_COL)
         rec_col_name = payload.get("rec_seq_col", DEFAULT_REC_COL)
         lig_id_col_name = payload.get("lig_id_col", DEFAULT_LIG_ID_COL)
         rec_id_col_name = payload.get("rec_id_col", DEFAULT_REC_ID_COL)
         lr_id_col_name = payload.get("lr_id_col", DEFAULT_LR_ID_COL)
 
-        # 1) Generate job_id
+        # Generate job id
         job_id = str(uuid.uuid4())
 
-        # 2) Normalize ligand inputs
+        # Prepare containers
         smiles_list = []
-        lig_meta_list = []  # each item: {name:..., id:...}
+        lig_meta_list = []  # each: {"name":..., "id":..., "lr_id":...}
 
-        if "smiles" in payload:
-            incoming = payload.get("smiles", [])
-            if not isinstance(incoming, list):
-                return Response({"error": "'smiles' must be a list"}, status=status.HTTP_400_BAD_REQUEST)
-            if MAX_LIMIT and len(incoming) > MAX_LIMIT:
-                return Response({"error": f"Max {MAX_LIMIT} SMILES allowed"}, status=status.HTTP_400_BAD_REQUEST)
-            for s in incoming:
-                s = str(s).strip()
-                if not s:
-                    return Response({"error": "Empty SMILES provided"}, status=status.HTTP_400_BAD_REQUEST)
-                smiles_list.append(s)
-                lig_meta_list.append({"name": None, "id": None})
-        elif "ligands" in payload:
-            ligs = payload.get("ligands")
-            if not isinstance(ligs, list) or not ligs:
-                return Response({"error": "'ligands' must be a non-empty list"}, status=status.HTTP_400_BAD_REQUEST)
-            if MAX_LIMIT and len(ligs) > MAX_LIMIT:
-                return Response({"error": f"Max {MAX_LIMIT} ligands allowed"}, status=status.HTTP_400_BAD_REQUEST)
-            for lig in ligs:
-                if isinstance(lig, dict):
-                    s = str(lig.get("smiles", "")).strip()
-                    if not s:
-                        return Response({"error": "Ligand SMILES empty"}, status=status.HTTP_400_BAD_REQUEST)
-                    smiles_list.append(s)
-                    lig_meta_list.append({"name": lig.get("name"), "id": lig.get("id")})
-                elif isinstance(lig, str) and lig.strip():
-                    smiles_list.append(lig.strip())
-                    lig_meta_list.append({"name": None, "id": None})
-                else:
-                    return Response({"error": "Invalid ligand format"}, status=status.HTTP_400_BAD_REQUEST)
+        # 1) If uploaded CSV present, parse it (CSV may include columns in any order)
+        uploaded_csv = None
+        try:
+            uploaded_csv = request.FILES.get("input_file")
+        except Exception:
+            uploaded_csv = None
+
+        if uploaded_csv:
+            # Read CSV text
+            try:
+                csv_text = uploaded_csv.read().decode("utf-8", errors="replace")
+                rdr = csv.DictReader(io.StringIO(csv_text))
+                for row in rdr:
+                    # Extract values using provided column names (fall back to common names)
+                    smi = (row.get(lig_col_name) or row.get(DEFAULT_LIG_COL) or "").strip()
+                    if not smi:
+                        # skip rows without SMILES
+                        continue
+
+                    # ligand id field from provided lig_id_col_name or fallback keys
+                    lig_id_val = (row.get(lig_id_col_name) or row.get(DEFAULT_LIG_ID_COL) or "").strip() or None
+
+                    # receptor id field
+                    rec_id_val = (row.get(rec_id_col_name) or row.get(DEFAULT_REC_ID_COL) or "").strip() or None
+
+                    # lr id (ID) may be present per-row or can be top-level (see below)
+                    lr_id_val = (row.get(lr_id_col_name) or row.get(DEFAULT_LR_ID_COL) or "").strip() or None
+
+                    # Add to lists
+                    smiles_list.append(smi)
+                    lig_meta_list.append({
+                        "name": (row.get("ligand_name") or row.get("name") or None),
+                        "id": lig_id_val,
+                        "rec_id": rec_id_val,
+                        "lr_id": lr_id_val,
+                    })
+            except Exception as e:
+                if DEBUG_LOG:
+                    print(f"[SMILES] Failed to parse uploaded CSV: {e}")
+                return Response({"error": "Failed to parse uploaded CSV."}, status=status.HTTP_400_BAD_REQUEST)
+
         else:
-            return Response({"error": "Provide 'smiles' list or 'ligands' list"}, status=status.HTTP_400_BAD_REQUEST)
+            # 2) JSON/form input behavior
+            if "smiles" in payload:
+                incoming = payload.get("smiles", [])
+                if not isinstance(incoming, list):
+                    return Response({"error": "'smiles' must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+                if MAX_LIMIT and len(incoming) > MAX_LIMIT:
+                    return Response({"error": f"Max {MAX_LIMIT} SMILES allowed"}, status=status.HTTP_400_BAD_REQUEST)
+                for s in incoming:
+                    s = str(s).strip()
+                    if not s:
+                        return Response({"error": "Empty SMILES provided"}, status=status.HTTP_400_BAD_REQUEST)
+                    smiles_list.append(s)
+                    lig_meta_list.append({"name": None, "id": None, "rec_id": None, "lr_id": None})
+
+            elif "ligands" in payload:
+                ligs = payload.get("ligands")
+                if not isinstance(ligs, list) or not ligs:
+                    return Response({"error": "'ligands' must be a non-empty list"}, status=status.HTTP_400_BAD_REQUEST)
+                if MAX_LIMIT and len(ligs) > MAX_LIMIT:
+                    return Response({"error": f"Max {MAX_LIMIT} ligands allowed"}, status=status.HTTP_400_BAD_REQUEST)
+                for lig in ligs:
+                    if isinstance(lig, dict):
+                        s = str(lig.get("smiles", "")).strip()
+                        if not s:
+                            return Response({"error": "Ligand SMILES empty"}, status=status.HTTP_400_BAD_REQUEST)
+                        smiles_list.append(s)
+                        lig_meta_list.append({
+                            "name": lig.get("name"),
+                            "id": lig.get("id"),
+                            "rec_id": lig.get("rec_id"),
+                            "lr_id": lig.get("lr_id"),
+                        })
+                    elif isinstance(lig, str) and lig.strip():
+                        smiles_list.append(lig.strip())
+                        lig_meta_list.append({"name": None, "id": None, "rec_id": None, "lr_id": None})
+                    else:
+                        return Response({"error": "Invalid ligand format"}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({"error": "Provide 'smiles' list or 'ligands' list or upload 'input_file' CSV"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not smiles_list:
             return Response({"error": "No valid SMILES found"}, status=status.HTTP_400_BAD_REQUEST)
@@ -97,48 +144,50 @@ class SmilesPredictionAPIView(APIView):
         if MAX_LIMIT == 1 and len(smiles_list) != 1:
             return Response({"error": "Exactly 1 SMILES required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 3) Receptor (optional) and receptor id (optional)
+        # 3) Receptor (optional top-level)
         receptor = payload.get("receptor")
         receptor_seq = None
-        receptor_id = None
+        receptor_id_top = None
         if isinstance(receptor, dict):
             seq = receptor.get("sequence")
             if seq and isinstance(seq, str) and seq.strip():
                 receptor_seq = seq.strip()
-            receptor_id = receptor.get("id")
+            receptor_id_top = receptor.get("id") or None
 
-        # 4) lr_id (optional top-level)
-        lr_id_value = payload.get("lr_id") or payload.get("lr_id_value") or None
+        # 4) lr_id value may also be provided top-level (applies to all rows unless per-row value present)
+        lr_id_top = payload.get("lr_id") or payload.get("lr_id_value") or None
 
-        # 5) Build CSV header
-        header = [lig_col_name]
-        if receptor_seq:
-            header.append(rec_col_name)
-
-        include_name = any(m.get("name") for m in lig_meta_list)
-        if include_name:
-            header.append("ligand_name")
-
-        # ALWAYS include the ID columns using the provided column names
-        header.append(lig_id_col_name)
-        header.append(rec_id_col_name)
-        header.append(lr_id_col_name)
-
+        # 5) Build CSV with EXACT ORDER requested:
+        #    ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer, lineterminator="\n")
+        header = [
+            lr_id_col_name,     # ID
+            lig_id_col_name,    # Temp_Ligand_ID
+            lig_col_name,       # SMILES
+            rec_col_name,       # Mutated_Sequence
+            rec_id_col_name     # TempRecID
+        ]
         writer.writerow(header)
 
         for idx, smi in enumerate(smiles_list):
-            row = [smi]
-            if receptor_seq:
-                row.append(receptor_seq)
             meta = lig_meta_list[idx] if idx < len(lig_meta_list) else {}
-            if include_name:
-                row.append(meta.get("name") or "")
-            # always append ids (may be None -> empty string)
-            row.append(meta.get("id") or "")
-            row.append(receptor_id or "")
-            row.append(lr_id_value or "")
+
+            # Determine per-row values; precedence: per-row CSV lr_id/rec_id if present -> top-level values -> empty
+            row_lr_id = meta.get("lr_id") or lr_id_top or ""
+            row_lig_id = meta.get("id") or ""
+            row_smiles = smi
+            row_rec_seq = receptor_seq or ""  # if receptor provided top-level, use it; earlier CSV rows may contain rec id only
+            # receptor id (TempRecID) — prefer per-row rec_id value (if parsed from uploaded CSV), else top-level receptor id
+            row_rec_id = meta.get("rec_id") or receptor_id_top or ""
+
+            row = [
+                row_lr_id,
+                row_lig_id,
+                row_smiles,
+                row_rec_seq,
+                row_rec_id
+            ]
             writer.writerow(row)
 
         csv_bytes = csv_buffer.getvalue().encode("utf-8")
@@ -146,66 +195,75 @@ class SmilesPredictionAPIView(APIView):
 
         csv_filename = f"{job_id}.csv"
 
-        # Save CSV to disk if JOB_DATA_DIR configured (safe persistent copy)
+        # Save CSV directly under JOB_DATA_DIR/<job_id>/<job_id>.csv
         if JOB_DATA_DIR:
             try:
-                job_input_dir = os.path.join(JOB_DATA_DIR, job_id, "input")
-                os.makedirs(job_input_dir, exist_ok=True)
-                csv_path = os.path.join(job_input_dir, csv_filename)
+                job_dir = os.path.join(JOB_DATA_DIR, job_id)
+                os.makedirs(job_dir, exist_ok=True)
+                csv_path = os.path.join(job_dir, csv_filename)
                 with open(csv_path, "wb") as fh:
                     fh.write(csv_bytes)
                 if DEBUG_LOG:
                     print(f"[SMILES] Saved CSV to disk: {csv_path}")
             except Exception as e:
                 if DEBUG_LOG:
-                    print(f"[SMILES] Warning: failed to save CSV to disk for job {job_id}: {e}")
+                    print(f"[SMILES] Error saving CSV to JOB_DATA_DIR for job {job_id}: {e}")
+                return Response({"error": "Failed to save CSV to JOB_DATA_DIR"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        else:
+            # fallback to tmp
+            tmp_dir = os.path.join("/tmp", "smiles_jobs", job_id)
+            try:
+                os.makedirs(tmp_dir, exist_ok=True)
+                csv_path = os.path.join(tmp_dir, csv_filename)
+                with open(csv_path, "wb") as fh:
+                    fh.write(csv_bytes)
+                if DEBUG_LOG:
+                    print(f"[SMILES] JOB_DATA_DIR not configured - saved CSV to tmp: {csv_path}")
+            except Exception as e:
+                if DEBUG_LOG:
+                    print(f"[SMILES] Failed to save CSV to tmp for job {job_id}: {e}")
+                return Response({"error": "Failed to save CSV to disk"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # debug: preview
+        # debug preview
         if DEBUG_LOG:
             try:
                 print(f"[SMILES] CSV preview:\n{csv_bytes.decode('utf-8')}")
             except Exception:
                 print("[SMILES] CSV preview: <binary or decode error>")
 
-        # 6) Send to pipeline with exact form fields like your curl
+        # 6) Post to pipeline using saved file (multipart/form-data)
         if not PREDICT_DOCKER_URL:
             return Response({"error": "Pipeline URL not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         pipeline_url = PREDICT_DOCKER_URL.rstrip("/") + "/pipeline/run"
 
-        data = {
+        form_data = {
             "job_id": job_id,
             "lig_smiles_col": lig_col_name,
+            # If no receptor sequence present, send empty string for rec_seq_col (pipeline expects the field)
             "rec_seq_col": rec_col_name if receptor_seq else "",
             "lig_id_col": lig_id_col_name,
             "rec_id_col": rec_id_col_name,
             "lr_id_col": lr_id_col_name,
         }
 
-        # Ensure BytesIO is rewound before request
-        bio = io.BytesIO(csv_bytes)
-        bio.seek(0)
-        files = {"input_file": (csv_filename, bio, "text/csv")}
-
         if DEBUG_LOG:
-            print(f"[SMILES] Posting to pipeline {pipeline_url} job_id={job_id} rows={len(smiles_list)} csv_name={csv_filename}")
-            print(f"[SMILES] form data: {data}")
+            print(f"[SMILES] Posting to pipeline {pipeline_url} job_id={job_id} rows={len(smiles_list)} csv_path={csv_path}")
+            print(f"[SMILES] form data: {form_data}")
 
         try:
-            resp = requests.post(pipeline_url, data=data, files=files, timeout=30)
-        except requests.RequestException as e:
+            with open(csv_path, "rb") as fh:
+                files = {"input_file": (csv_filename, fh, "text/csv")}
+                try:
+                    resp = requests.post(pipeline_url, data=form_data, files=files, timeout=30)
+                except requests.RequestException as e:
+                    if DEBUG_LOG:
+                        print(f"[SMILES] Pipeline POST failed for job {job_id}: {e}")
+                    return Response({"error": "Failed to contact prediction pipeline."}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as e:
             if DEBUG_LOG:
-                print(f"[SMILES] Pipeline POST failed for job {job_id}: {e}")
-            try:
-                bio.close()
-            except Exception:
-                pass
-            return Response({"error": "Failed to contact prediction pipeline."}, status=status.HTTP_502_BAD_GATEWAY)
-
-        try:
-            bio.close()
-        except Exception:
-            pass
+                print(f"[SMILES] Failed to open CSV file {csv_path} for POST: {e}")
+            return Response({"error": "Failed to read saved CSV file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         if not (200 <= resp.status_code < 300):
             err_body = None
@@ -217,7 +275,7 @@ class SmilesPredictionAPIView(APIView):
                 print(f"[SMILES] Pipeline returned non-2xx for job {job_id}: {resp.status_code} - {err_body}")
             return Response({"error": "Pipeline rejected job submission", "details": err_body}, status=status.HTTP_502_BAD_GATEWAY)
 
-        # 7) Optional lightweight scheduler task
+        # Optional scheduler bookkeeping
         if ENABLE_SCHEDULER:
             def execute_local(jid):
                 if DEBUG_LOG:
@@ -225,8 +283,8 @@ class SmilesPredictionAPIView(APIView):
                 return
             schedule_job(job_id, execute_local)
 
-        # 8) Response
-        return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status)
+        return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status.HTTP_200_OK)
+
 
 
 # class CSVPredictionAPIView(APIView):
