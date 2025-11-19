@@ -1,3 +1,4 @@
+import os
 import uuid
 import csv
 import io
@@ -11,6 +12,7 @@ from rest_framework import status
 from core.services.job_scheduler import schedule_job
 
 PREDICT_DOCKER_URL = settings.PREDICT_DOCKER_URL
+JOB_DATA_DIR = getattr(settings, "JOB_DATA_DIR", None)
 MAX_LIMIT = getattr(settings, "MAX_SMILES_LIMIT", 1)
 DEBUG_LOG = getattr(settings, "DEBUG_LOG", False)
 ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
@@ -26,10 +28,13 @@ DEFAULT_LR_ID_COL = "ID"
 class SmilesPredictionAPIView(APIView):
     """
     Builds an in-memory CSV named {job_id}.csv and POSTs it to the pipeline
-    with the form-field names matching your curl example:
-      lig_smiles_col -> column name for SMILES
-      rec_seq_col    -> column name for receptor sequence
-      lig_id_col, rec_id_col, lr_id_col
+    with the form-field names matching your curl example.
+
+    Additionally, saves a persistent copy of the CSV at:
+      {JOB_DATA_DIR}/{job_id}/input/{job_id}.csv
+    if JOB_DATA_DIR is configured.
+
+    Returns only job_id + message (202 Accepted).
     """
 
     def post(self, request):
@@ -97,13 +102,10 @@ class SmilesPredictionAPIView(APIView):
                 receptor_seq = seq.strip()
 
         # 4) Build CSV in-memory with header names matching the column names
-        #    We put ligand SMILES column first (using lig_col_name), then optional receptor column,
-        #    then optional ligand metadata columns (name, id) if present.
         header = [lig_col_name]
         if receptor_seq:
             header.append(rec_col_name)
 
-        # include ligand_name / ligand_id columns if any metadata present
         include_name = any(m.get("name") for m in lig_meta_list)
         include_id = any(m.get("id") for m in lig_meta_list)
         if include_name:
@@ -131,6 +133,20 @@ class SmilesPredictionAPIView(APIView):
 
         csv_filename = f"{job_id}.csv"
 
+        # Save CSV to disk if JOB_DATA_DIR configured (safe persistent copy)
+        if JOB_DATA_DIR:
+            try:
+                job_input_dir = os.path.join(JOB_DATA_DIR, job_id, "input")
+                os.makedirs(job_input_dir, exist_ok=True)
+                csv_path = os.path.join(job_input_dir, csv_filename)
+                with open(csv_path, "wb") as fh:
+                    fh.write(csv_bytes)
+                if DEBUG_LOG:
+                    print(f"[SMILES] Saved CSV to disk: {csv_path}")
+            except Exception as e:
+                if DEBUG_LOG:
+                    print(f"[SMILES] Warning: failed to save CSV to disk for job {job_id}: {e}")
+
         # debug: preview
         if DEBUG_LOG:
             try:
@@ -144,10 +160,9 @@ class SmilesPredictionAPIView(APIView):
 
         pipeline_url = PREDICT_DOCKER_URL.rstrip("/") + "/pipeline/run"
 
-        # Here we map our local column names to the pipeline field names (exact)
         data = {
             "job_id": job_id,
-            "lig_smiles_col": lig_col_name,   # e.g., "SMILES"
+            "lig_smiles_col": lig_col_name,
             "rec_seq_col": rec_col_name if receptor_seq else "",
             "lig_id_col": lig_id_col_name,
             "rec_id_col": rec_id_col_name,
