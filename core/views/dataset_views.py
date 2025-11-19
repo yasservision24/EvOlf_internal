@@ -408,7 +408,7 @@ class FetchDatasetDetails(APIView):
     """
     def get(self, request, evolfId):
         try:
-            csv_path = os.path.join(settings.BASE_DIR,"EvOlf_internal", "core", "management", "enhanced_data_with_species_links.csv")
+            csv_path = os.path.join(settings.BASE_DIR,"EvOlf_internal", "core", "management", "evolf_data.csv")
             if not os.path.exists(csv_path):
                 return Response({"error": "Dataset CSV not found", "path": csv_path}, status=status.HTTP_404_NOT_FOUND)
 
@@ -466,7 +466,7 @@ class DownloadByEvolfId(APIView):
             csv_path = os.path.join(
                 settings.BASE_DIR,
                 "EvOlf_internal", "core", "management",
-                "enhanced_data_with_species_links.csv"
+                "evolf_data.csv"
             )
             df = pd.read_csv(csv_path)
             id_col = "EvOlf ID" if "EvOlf ID" in df.columns else "EvOlf_ID"
