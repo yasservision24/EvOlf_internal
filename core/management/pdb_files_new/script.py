@@ -6,13 +6,13 @@ import pandas as pd
 # -----------------------------
 # PATHS
 # -----------------------------
-mapping_csv = r"C:\Users\kaif\Desktop\evolf\EvOlf_internal\core\management\pdb_files_new\Final_seq_evolf.csv"
+mapping_csv = r"Final_seq_evolf.csv"
 
 # Where original PDB files are located
-pdb_folder = r"C:\Users\kaif\Desktop\evolf\EvOlf_internal\core\management\pdb_files_new\pdb_out"
+pdb_folder = r"/16Tbdrive1/evolf/EvOlf_internal/core/management/pdb_files_new/pdb_out"
 
 # Where to save all copied PDB files
-output_folder = r"C:\Users\kaif\Desktop\evolf\EvOlf_internal\core\management\pdb_files"
+output_folder = r"/16Tbdrive1/evolf/EvOlf_internal/core/management/pdb_files"
 os.makedirs(output_folder, exist_ok=True)
 
 # -----------------------------
