@@ -8,7 +8,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from core.views.dataset_views import FetchDatasetDetails, DownloadByEvolfId
 from core.views.prediction_views import SmilesPredictionAPIView
-# from core.views.job_status_views import JobStatusAPIView
+from core.views.job_status_views import JobStatusAPIView
 
 
 
