@@ -1,6 +1,6 @@
 import pandas as pd
 from django.core.management.base import BaseCommand
-from core.models import Evolf  
+from core.models import EvOlf  
 
 class Command(BaseCommand):
     help = "Import Receptor data from a CSV file into PostgreSQL via Django ORM"
@@ -64,4 +64,4 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"✅ Successfully imported {len(objects)} records into PostgreSQL!"))
 
 
-#python manage.py import_evolf_data core/management/enhanced_data_with_species_links.csv
+#python manage.py import_evolf_data core/management/evolf_data.csv
