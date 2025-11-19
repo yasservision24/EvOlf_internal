@@ -19,7 +19,7 @@ urlpatterns = [
     path("search/", ElasticSearchView.as_view(), name="elastic_search"),
     # path("fetch-structures/<str:evolf_id>/", FetchStructureFilesAPIView.as_view(), name="fetch-structures"),
 
-    path("structures/<str:evolf_id>/", FetchLocalStructureAPIView.as_view(), name="fetch-local-structure"),
+    #path("structures/<str:evolf_id>/", FetchLocalStructureAPIView.as_view(), name="fetch-local-structure"),
     # path("dataset/export/<str:evolfId>/", DownloadDatasetByEvolf.as_view(), name="download-dataset-evolf"),
 
 
@@ -28,6 +28,6 @@ urlpatterns = [
 
     path("predict/smiles/", SmilesPredictionAPIView.as_view()),
     # path("predict/csv/", CSVPredictionAPIView.as_view()),
-    # path("job/<str:job_id>/status/", JobStatusAPIView.as_view(), name="job-status"),
+    path("job/<str:job_id>/status/", JobStatusAPIView.as_view(), name="job-status"),
 ]
 
