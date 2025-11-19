@@ -19,5 +19,5 @@ class EvOlfSerializer(serializers.ModelSerializer):
         # include fields you want to expose; here exposing all for simplicity
         fields = [
             'id', 'evolfId', 'receptor', 'species', 'class_field',
-            'ligand', 'mutation', 'chemblId', 'uniprotId', 'cd'
+            'ligand', 'mutation', 'chemblId', 'uniprotId', 'cid'
         ]
