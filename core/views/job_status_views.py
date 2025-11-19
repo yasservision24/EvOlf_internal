@@ -1,4 +1,3 @@
-# # core/views/job_status_views.py
 import os
 import json
 from rest_framework.views import APIView
@@ -8,14 +7,11 @@ from rest_framework import status
 BASE_DATA_DIR = "/data"
 
 class JobStatusAPIView(APIView):
-    """
-    GET /api/job/<job_id>/status/
-    Returns the job_status.json content for the job.
-    """
     def get(self, request, job_id):
         path = os.path.join(BASE_DATA_DIR, job_id, "job_status.json")
         if not os.path.exists(path):
-            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND
+            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+
         try:
             with open(path, "r") as f:
                 meta = json.load(f)
