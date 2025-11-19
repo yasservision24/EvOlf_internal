@@ -38,6 +38,13 @@ def _sanitize_identifier(s: str) -> str:
     return s or ""
 
 
+# Basic SMILES sanity regex (lightweight — not a full validator)
+_SMILES_ALLOWED_RE = re.compile(r'^[A-Za-z0-9@\+\-\[\]\(\)=#\/\\%.:\*]+$')
+
+# Receptor/amino-acid sequence regex (single-letter codes, allowing common ambiguous letters)
+_RECEPTOR_AA_RE = re.compile(r'^[ACDEFGHIKLMNPQRSTVWYBXZJUO]+$', re.I)
+
+
 class SmilesPredictionAPIView(APIView):
     """
     Accepts JSON/form with only:
@@ -46,11 +53,11 @@ class SmilesPredictionAPIView(APIView):
 
     Auto-generates:
       - ID -> "1" (unless top-level 'id' provided)
-      - Temp_Ligand_ID -> "lig_1" (or sanitized 'ligand_name' if provided, though frontend will not send it)
+      - Temp_Ligand_ID -> "lig_1" (or sanitized 'ligand_name' if provided)
       - TempRecID -> "TRec1"
 
     Saves CSV as: ID,Temp_Ligand_ID,SMILES,Mutated_Sequence,TempRecID
-    Posts multipart/form-data to pipeline URL.
+    Posts multipart/form-data to pipeline URL (only after format checks pass).
     """
 
     def post(self, request):
@@ -79,18 +86,31 @@ class SmilesPredictionAPIView(APIView):
         smiles = payload.get("smiles")
         receptor_seq = payload.get("sequence") or payload.get("mutated_sequence") or ""
 
-        # Validate smiles
+        # Validate smiles (basic checks)
         if not smiles or not isinstance(smiles, str) or not smiles.strip():
             return Response({"error": "'smiles' is required and must be a non-empty string."},
                             status=status.HTTP_400_BAD_REQUEST)
         smiles = smiles.strip()
+        # No whitespace inside canonical SMILES for our use-case
+        if re.search(r'\s', smiles):
+            return Response({"error": "Invalid SMILES: contains whitespace."}, status=status.HTTP_400_BAD_REQUEST)
+        if not _SMILES_ALLOWED_RE.match(smiles):
+            return Response({"error": "Invalid SMILES: contains unsupported characters."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate receptor_seq if present
+        # Validate receptor_seq if present (basic amino-acid alphabet check)
         if receptor_seq is not None and isinstance(receptor_seq, str):
             receptor_seq = receptor_seq.strip()
             if receptor_seq.startswith(">"):
                 return Response({"error": "FASTA format is not accepted. Provide a plain sequence string (no '>' header)."},
                                 status=status.HTTP_400_BAD_REQUEST)
+            if receptor_seq:
+                # No whitespace allowed inside sequence
+                if re.search(r'\s', receptor_seq):
+                    return Response({"error": "Invalid receptor sequence: contains whitespace."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                if not _RECEPTOR_AA_RE.match(receptor_seq):
+                    return Response({"error": "Invalid receptor sequence: contains non-amino-acid letters."},
+                                    status=status.HTTP_400_BAD_REQUEST)
         else:
             receptor_seq = ""
 
@@ -153,7 +173,7 @@ class SmilesPredictionAPIView(APIView):
             except Exception:
                 print("[SMILES] CSV preview: <decode error>")
 
-        # Post to pipeline
+        # Post to pipeline (only after format checks passed)
         if not PREDICT_DOCKER_URL:
             return Response({"error": "Pipeline URL not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -173,6 +193,7 @@ class SmilesPredictionAPIView(APIView):
         try:
             with open(csv_path, "rb") as fh:
                 files = {"input_file": (csv_filename, fh, "text/csv")}
+                # POST and wait only for the submission response (timeout kept short)
                 resp = requests.post(pipeline_url, data=form_data, files=files, timeout=30)
         except requests.RequestException as e:
             if DEBUG_LOG:
@@ -183,21 +204,27 @@ class SmilesPredictionAPIView(APIView):
                 print(f"[SMILES] Failed to open CSV file {csv_path} for POST: {e}")
             return Response({"error": "Failed to read saved CSV file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        if not (200 <= resp.status_code < 300):
+        # Treat any pipeline response with status_code < 400 as accepted submission.
+        if resp.status_code >= 400:
             try:
                 err_body = resp.json()
             except Exception:
                 err_body = resp.text
             if DEBUG_LOG:
-                print(f"[SMILES] Pipeline returned non-2xx for job {job_id}: {resp.status_code} - {err_body}")
+                print(f"[SMILES] Pipeline returned error for job {job_id}: {resp.status_code} - {err_body}")
             return Response({"error": "Pipeline rejected job submission", "details": err_body}, status=status.HTTP_502_BAD_GATEWAY)
 
-        # Optional scheduler bookkeeping
+        # Optional scheduler bookkeeping (best-effort, should not block response)
         if ENABLE_SCHEDULER:
             def execute_local(jid):
                 if DEBUG_LOG:
                     print(f"[SCHEDULER] Job {jid} enqueued for local bookkeeping.")
                 return
-            schedule_job(job_id, execute_local)
+            try:
+                schedule_job(job_id, execute_local)
+            except Exception:
+                if DEBUG_LOG:
+                    print(f"[SCHEDULER] Failed to schedule local bookkeeping for job {job_id}")
 
+        # Return immediately after successful submission to pipeline
         return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status.HTTP_200_OK)
