@@ -17,7 +17,7 @@ MAX_LIMIT = getattr(settings, "MAX_SMILES_LIMIT", 1)
 DEBUG_LOG = getattr(settings, "DEBUG_LOG", False)
 ENABLE_SCHEDULER = getattr(settings, "ENABLE_SCHEDULER", False)
 
-# Default column names that match your curl example; change if needed
+# Defaults that match your curl example
 DEFAULT_LIG_COL = "SMILES"
 DEFAULT_REC_COL = "Mutated_Sequence"
 DEFAULT_LIG_ID_COL = "Temp_Ligand_ID"
@@ -27,20 +27,20 @@ DEFAULT_LR_ID_COL = "ID"
 
 class SmilesPredictionAPIView(APIView):
     """
-    Builds an in-memory CSV named {job_id}.csv and POSTs it to the pipeline
-    with the form-field names matching your curl example.
-
-    Additionally, saves a persistent copy of the CSV at:
-      {JOB_DATA_DIR}/{job_id}/input/{job_id}.csv
-    if JOB_DATA_DIR is configured.
-
-    Returns only job_id + message (202 Accepted).
+    Builds CSV and posts to pipeline exactly like:
+      curl -X POST http://localhost:5000/pipeline/run \
+        -F "input_file=@./EvOlf_Input.csv" \
+        -F "lig_smiles_col=SMILES" \
+        -F "rec_seq_col=Mutated_Sequence" \
+        -F "lig_id_col=Temp_Ligand_ID" \
+        -F "rec_id_col=TempRecID" \
+        -F "lr_id_col=ID"
     """
 
     def post(self, request):
         payload = request.data or {}
 
-        # 0) Optionally accept column-name overrides from payload
+        # Allow overrides but default to the curl names
         lig_col_name = payload.get("lig_smiles_col", DEFAULT_LIG_COL)
         rec_col_name = payload.get("rec_seq_col", DEFAULT_REC_COL)
         lig_id_col_name = payload.get("lig_id_col", DEFAULT_LIG_ID_COL)
@@ -78,10 +78,11 @@ class SmilesPredictionAPIView(APIView):
                     if not s:
                         return Response({"error": "Ligand SMILES empty"}, status=status.HTTP_400_BAD_REQUEST)
                     smiles_list.append(s)
+                    # always capture name and id if provided
                     lig_meta_list.append({"name": lig.get("name"), "id": lig.get("id")})
                 elif isinstance(lig, str) and lig.strip():
                     smiles_list.append(lig.strip())
-                    lig_meta_list.append({})
+                    lig_meta_list.append({"name": None, "id": None})
                 else:
                     return Response({"error": "Invalid ligand format"}, status=status.HTTP_400_BAD_REQUEST)
         else:
@@ -101,17 +102,18 @@ class SmilesPredictionAPIView(APIView):
             if seq and isinstance(seq, str) and seq.strip():
                 receptor_seq = seq.strip()
 
-        # 4) Build CSV in-memory with header names matching the column names
+        # 4) Build CSV in-memory
+        # Always include the ligand_id column (using lig_id_col_name), even if empty.
         header = [lig_col_name]
         if receptor_seq:
             header.append(rec_col_name)
-
+        # include ligand_name column only if any name exists (keeps CSV compact)
         include_name = any(m.get("name") for m in lig_meta_list)
-        include_id = any(m.get("id") for m in lig_meta_list)
         if include_name:
             header.append("ligand_name")
-        if include_id:
-            header.append("ligand_id")
+        # ALWAYS include the ligand id column (but use the provided column name for the form)
+        # We still output a column header "ligand_id" (pipeline mapping uses lig_id_col form field)
+        header.append("ligand_id")
 
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer, lineterminator="\n")
@@ -124,8 +126,8 @@ class SmilesPredictionAPIView(APIView):
             meta = lig_meta_list[idx] if idx < len(lig_meta_list) else {}
             if include_name:
                 row.append(meta.get("name") or "")
-            if include_id:
-                row.append(meta.get("id") or "")
+            # always append id column (may be None => output empty string)
+            row.append(meta.get("id") or "")
             writer.writerow(row)
 
         csv_bytes = csv_buffer.getvalue().encode("utf-8")
@@ -133,7 +135,7 @@ class SmilesPredictionAPIView(APIView):
 
         csv_filename = f"{job_id}.csv"
 
-        # Save CSV to disk if JOB_DATA_DIR configured (safe persistent copy)
+        # Save a persistent copy if JOB_DATA_DIR is configured
         if JOB_DATA_DIR:
             try:
                 job_input_dir = os.path.join(JOB_DATA_DIR, job_id, "input")
@@ -154,22 +156,23 @@ class SmilesPredictionAPIView(APIView):
             except Exception:
                 print("[SMILES] CSV preview: <binary or decode error>")
 
-        # 5) Send to pipeline using the exact form fields as your curl
+        # 5) Send to pipeline with exact form fields like your curl
         if not PREDICT_DOCKER_URL:
             return Response({"error": "Pipeline URL not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         pipeline_url = PREDICT_DOCKER_URL.rstrip("/") + "/pipeline/run"
 
+        # Map to the exact curl-style form field values (these are the *column names* the pipeline should read)
         data = {
             "job_id": job_id,
-            "lig_smiles_col": lig_col_name,
+            "lig_smiles_col": lig_col_name,   # e.g., SMILES
             "rec_seq_col": rec_col_name if receptor_seq else "",
-            "lig_id_col": lig_id_col_name,
-            "rec_id_col": rec_id_col_name,
-            "lr_id_col": lr_id_col_name,
+            "lig_id_col": lig_id_col_name,    # e.g., Temp_Ligand_ID
+            "rec_id_col": rec_id_col_name,    # e.g., TempRecID
+            "lr_id_col": lr_id_col_name,      # e.g., ID
         }
 
-        # build BytesIO and ensure rewind
+        # Ensure BytesIO is rewound before request
         bio = io.BytesIO(csv_bytes)
         bio.seek(0)
         files = {"input_file": (csv_filename, bio, "text/csv")}
@@ -204,16 +207,15 @@ class SmilesPredictionAPIView(APIView):
                 print(f"[SMILES] Pipeline returned non-2xx for job {job_id}: {resp.status_code} - {err_body}")
             return Response({"error": "Pipeline rejected job submission", "details": err_body}, status=status.HTTP_502_BAD_GATEWAY)
 
-        # 6) Optionally schedule local bookkeeping via scheduler (lightweight)
+        # 6) Optional lightweight scheduler task
         if ENABLE_SCHEDULER:
             def execute_local(jid):
                 if DEBUG_LOG:
                     print(f"[SCHEDULER] Job {jid} enqueued for local bookkeeping.")
-                # small, safe tasks only: DB updates, notifications, logging, etc.
                 return
             schedule_job(job_id, execute_local)
 
-        # 7) Return ONLY job_id and message
+        # 7) Response
         return Response({"job_id": job_id, "message": "Job submitted to pipeline."}, status=status.HTTP_202_ACCEPTED)
 
 # class CSVPredictionAPIView(APIView):
