@@ -105,7 +105,6 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
 
     # Extract IDs and mutation info
     uniprot_id = gf("UniProt ID") 
-    ensembl_id = gf("Ensembl ID")
     chembl_id = gf("ChEMBL ID") 
     cid_raw = gf("CID")
     cid = str(cid_raw).split(".")[0] if cid_raw else ""
@@ -132,8 +131,6 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "receptorSubtype": gf("Receptor SubType"),
         "uniprotId": uniprot_id,
         "uniprotLink": gf("UniProt Link"),
-        "ensemblId": ensembl_id,
-        "ensemblLink": gf("Ensembl Link"),
         "chemblId": chembl_id,
         "chemblLink": gf("ChEMBL Link"),
         "cid": cid,
@@ -155,12 +152,11 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "value": str(gf("Value") or ""),
         "unit": gf("Unit") or "",
         "comments": gf("Comment") or "",
-        "geneSymbol": gf("Gene Symbol") or "",
+
         "interactionType": gf("Interaction Type") or "",
         "interactionValue": _sanitize_scalar(gf("Interaction Value", "interactionValue")) or "",
         "interactionUnit": gf("Interaction Unit", "interactionUnit") or "",
-        "quality": gf("Quality", "quality") or "",
-        "qualityScore": _sanitize_scalar(gf("Quality Score", "qualityScore")) or "",
+
     }
 
     return formatted
