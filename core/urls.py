@@ -28,6 +28,6 @@ urlpatterns = [
 
     path("predict/smiles/", SmilesPredictionAPIView.as_view()),
     # path("predict/csv/", CSVPredictionAPIView.as_view()),
-    path("job/<str:job_id>/", JobStatusAPIView.as_view(), name="job-status"),
+    path("predict/job/<str:job_id>/", JobStatusAPIView.as_view(), name="job-status"),
 ]
 
