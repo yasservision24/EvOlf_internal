@@ -130,7 +130,7 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "mutationImpact": gf("Mutation Impact") or "",
         "receptorSubtype": gf("Receptor SubType"),
         "uniprotId": uniprot_id,
-        "uniprotLink": gf("UniProt Link"),
+        "uniprotLink": gf("UniProt_Link"),
         "chemblId": chembl_id,
         "chemblLink": gf("ChEMBL Link"),
         "pubchemId": cid,
