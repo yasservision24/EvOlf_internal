@@ -151,6 +151,8 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "value": str(gf("Value") or ""),
         "unit": gf("Unit") or "",
         "comments": gf("Comment") or "",
+       "sourceLinks":gf("Source_Links") or "",
+       "source":gf("Source") or "",
 
         
 
