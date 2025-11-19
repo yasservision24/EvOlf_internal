@@ -133,7 +133,7 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "uniprotLink": gf("UniProt Link"),
         "chemblId": chembl_id,
         "chemblLink": gf("ChEMBL Link"),
-        "cid": cid,
+        "cId": cid,
         "pubchemId": cid,
         "pubchemLink": gf("PubChem Link"),
         "smiles": gf("SMILES") or "",
@@ -153,9 +153,7 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "unit": gf("Unit") or "",
         "comments": gf("Comment") or "",
 
-        "interactionType": gf("Interaction Type") or "",
-        "interactionValue": _sanitize_scalar(gf("Interaction Value", "interactionValue")) or "",
-        "interactionUnit": gf("Interaction Unit", "interactionUnit") or "",
+        
 
     }
 
