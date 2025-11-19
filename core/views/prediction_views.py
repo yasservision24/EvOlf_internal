@@ -18,21 +18,22 @@ ENABLE_SCHEDULER = settings.ENABLE_SCHEDULER
 DEBUG_LOG = settings.DEBUG_LOG
 
 
-
 class SmilesPredictionAPIView(APIView):
 
     def post(self, request):
         smiles_list = request.data.get("smiles")
 
+        # Validate input
         if not smiles_list or not isinstance(smiles_list, list):
             return Response(
-                {"error": "SMILES list must be a JSON array."},
+                {"error": "SMILES list must be a JSON array containing exactly 1 SMILES."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(smiles_list) > MAX_LIMIT:
+        # Only 1 ligand allowed
+        if len(smiles_list) != 1:
             return Response(
-                {"error": f"Maximum {MAX_LIMIT} SMILES allowed. Use Docker for bulk."},
+                {"error": "Only one SMILES is allowed per prediction request."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -47,12 +48,8 @@ class SmilesPredictionAPIView(APIView):
         def execute(job_id):
             if DEBUG_LOG:
                 print(f"[EXECUTE] Running job: {job_id}")
-
-            # ---- future orchestrator call ----
-            # requests.post(PREDICT_DOCKER_URL, json={"job_id": job_id})
             return
 
-        # Schedule or run immediately
         if ENABLE_SCHEDULER:
             schedule_job(job_id, execute)
         else:
@@ -68,59 +65,60 @@ class SmilesPredictionAPIView(APIView):
 
 
 
-class CSVPredictionAPIView(APIView):
 
-    def post(self, request):
-        file = request.FILES.get("file")
+# class CSVPredictionAPIView(APIView):
 
-        if not file:
-            return Response(
-                {"error": "CSV file required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+#     def post(self, request):
+#         file = request.FILES.get("file")
 
-        try:
-            decoded = file.read().decode("utf-8").splitlines()
-            reader = csv.DictReader(decoded)
+#         if not file:
+#             return Response(
+#                 {"error": "CSV file required."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
 
-            if "SMILES" not in reader.fieldnames:
-                return Response(
-                    {"error": "CSV must contain 'SMILES' column."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+#         try:
+#             decoded = file.read().decode("utf-8").splitlines()
+#             reader = csv.DictReader(decoded)
 
-            smiles_list = [row["SMILES"] for row in reader]
+#             if "SMILES" not in reader.fieldnames:
+#                 return Response(
+#                     {"error": "CSV must contain 'SMILES' column."},
+#                     status=status.HTTP_400_BAD_REQUEST,
+#                 )
 
-        except Exception as e:
-            return Response({"error": f"CSV parsing error: {str(e)}"}, status=400)
+#             smiles_list = [row["SMILES"] for row in reader]
 
-        if len(smiles_list) > MAX_LIMIT:
-            return Response(
-                {"error": f"CSV has > {MAX_LIMIT} SMILES. Use Docker pipeline."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+#         except Exception as e:
+#             return Response({"error": f"CSV parsing error: {str(e)}"}, status=400)
 
-        job_id = str(uuid.uuid4())
-        input_path = f"{BASE_DATA_DIR}/{job_id}/input"
-        os.makedirs(input_path, exist_ok=True)
+#         if len(smiles_list) > MAX_LIMIT:
+#             return Response(
+#                 {"error": f"CSV has > {MAX_LIMIT} SMILES. Use Docker pipeline."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
 
-        with open(f"{input_path}/smiles.json", "w") as f:
-            json.dump({"smiles": smiles_list}, f)
+#         job_id = str(uuid.uuid4())
+#         input_path = f"{BASE_DATA_DIR}/{job_id}/input"
+#         os.makedirs(input_path, exist_ok=True)
 
-        def execute(job_id):
-            if DEBUG_LOG:
-                print(f"[EXECUTE] Running CSV job: {job_id}")
-            # requests.post(PREDICT_DOCKER_URL, json={"job_id": job_id})
+#         with open(f"{input_path}/smiles.json", "w") as f:
+#             json.dump({"smiles": smiles_list}, f)
 
-        if ENABLE_SCHEDULER:
-            schedule_job(job_id, execute)
-        else:
-            execute(job_id)
+#         def execute(job_id):
+#             if DEBUG_LOG:
+#                 print(f"[EXECUTE] Running CSV job: {job_id}")
+#             # requests.post(PREDICT_DOCKER_URL, json={"job_id": job_id})
 
-        return Response(
-            {
-                "job_id": job_id,
-                "message": "CSV job submitted successfully."
-            },
-            status=status.HTTP_200_OK
-        )
+#         if ENABLE_SCHEDULER:
+#             schedule_job(job_id, execute)
+#         else:
+#             execute(job_id)
+
+#         return Response(
+#             {
+#                 "job_id": job_id,
+#                 "message": "CSV job submitted successfully."
+#             },
+#             status=status.HTTP_200_OK
+#         )

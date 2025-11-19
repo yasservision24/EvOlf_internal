@@ -7,7 +7,7 @@ from core.views.structure_views import FetchLocalStructureAPIView
 from django.conf import settings
 from django.conf.urls.static import static
 from core.views.dataset_views import FetchDatasetDetails, DownloadByEvolfId
-from core.views.prediction_views import SmilesPredictionAPIView, CSVPredictionAPIView
+from core.views.prediction_views import SmilesPredictionAPIView
 # from core.views.job_status_views import JobStatusAPIView
 
 
@@ -27,7 +27,7 @@ urlpatterns = [
     path('dataset/export/<str:evolfId>/', DownloadByEvolfId.as_view(), name='download_by_evolf'),
 
     path("predict/smiles/", SmilesPredictionAPIView.as_view()),
-    path("predict/csv/", CSVPredictionAPIView.as_view()),
+    # path("predict/csv/", CSVPredictionAPIView.as_view()),
     # path("job/<str:job_id>/status/", JobStatusAPIView.as_view(), name="job-status"),
 ]
 
