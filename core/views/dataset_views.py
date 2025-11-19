@@ -296,7 +296,7 @@ class DatasetExportAPIView(APIView):
         writer = csv.writer(csv_buffer)
         fields = [
             'EvOlf_ID', 'Receptor', 'Species', 'Class', 'Ligand',
-            'Mutation_Status', 'Mutation', 'ChEMBL_ID', 'UniProt_ID', 'Ensembl_ID'
+            'Mutation_Status', 'Mutation', 'ChEMBL_ID', 'UniProt_ID', 'CID'
         ]
 
         
@@ -341,7 +341,7 @@ class DatasetDownloadAPIView(APIView):
             writer = csv.writer(csv_buffer)
             fields = [
             'EvOlf_ID', 'Receptor', 'Species', 'Class', 'Ligand',
-            'Mutation_Status', 'Mutation', 'ChEMBL_ID', 'UniProt_ID', 'Ensembl_ID'
+            'Mutation_Status', 'Mutation', 'ChEMBL_ID', 'UniProt_ID', 'CID'
             ]
             writer.writerow(fields)
             for obj in qs.iterator():

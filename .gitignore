@@ -20,3 +20,6 @@ media/
 .idea/
 .DS_Store
 *.log
+
+core/management/pdb_files/
+core/management/sdf_files/
