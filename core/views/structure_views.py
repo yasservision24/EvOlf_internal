@@ -138,7 +138,7 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "smiles": gf("SMILES") or "",
         "inchi": gf("InChi") or "",
         "inchiKey": gf("InChiKey") or "",
-        "iupacName": gf("IUPAC Name") or "",
+        "iupacName": gf("IUPAC Name") or "", 
         "sequence": gf("Sequence") or "",
         "pdbData": pdb_text,
         "sdfData": sdf_text,
