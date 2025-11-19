@@ -36,8 +36,6 @@ DEBUG_LOG = os.getenv("DEBUG_LOG", "0") == "1"
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-
-
 MEDIA_ROOT = BASE_DIR / 'EvOlf_internal/core/management'
 MEDIA_URL = '/media/'   # Use relative URL here
 
@@ -90,6 +88,32 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'evo_backend.wsgi.application'
+
+# -------------------------------
+# DRF & Rate Limiting (ADDED)
+# -------------------------------
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # 'anon' covers all users since you have no login
+        # Format examples: '100/day', '10/minute', '5/second'
+        'anon': '60/minute', 
+    }
+}
+
+# -------------------------------
+# Caching (ADDED - Required for throttling)
+# -------------------------------
+# This uses local memory to store the request counts.
+# If you restart the server, the rate limit counts reset.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+    }
+}
 
 # -------------------------------
 # Database
