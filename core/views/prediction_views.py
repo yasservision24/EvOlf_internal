@@ -111,6 +111,8 @@ class SmilesPredictionAPIView(APIView):
         csv_buffer.close()
 
         csv_filename = f"{job_id}.csv"
+        
+
 
         # 5) Send to pipeline
         if not PREDICT_DOCKER_URL:
