@@ -12,12 +12,12 @@ class EvOlfSerializer(serializers.ModelSerializer):
     mutation = serializers.CharField(source='Mutation')
     chemblId = serializers.CharField(source='ChEMBL_ID')
     uniprotId = serializers.CharField(source='UniProt_ID')
-    
+    cid = serializers.CharField(source='CID')
 
     class Meta:
         model = EvOlf
         # include fields you want to expose; here exposing all for simplicity
         fields = [
             'id', 'evolfId', 'receptor', 'species', 'class_field',
-            'ligand', 'mutation', 'chemblId', 'uniprotId'
+            'ligand', 'mutation', 'chemblId', 'uniprotId', 'cd'
         ]
