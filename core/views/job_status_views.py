@@ -26,7 +26,7 @@ class JobStatusAPIView(APIView):
     def get(self, request, job_id):
         job_dir = os.path.join(JOB_DATA_DIR, job_id)
         if not os.path.isdir(job_dir):
-            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Job not not found"}, status=status.HTTP_404_NOT_FOUND)
 
         output_dir = os.path.join(job_dir, "output")
 
@@ -41,9 +41,12 @@ class JobStatusAPIView(APIView):
                         rel = os.path.relpath(full, job_dir)
                         output_files.append(rel)
 
-        # If no output files -> not ready / not found
+            # If no output files yet -> job is still running / waiting
         if not output_files:
-            return Response({"error": "Job status not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"status": "processing", "message": "Job started but no output files yet"},
+                status=status.HTTP_200_OK
+            )
 
         # if client requested download via query param
         download_param = request.query_params.get("download") or request.query_params.get("dl")
