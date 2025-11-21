@@ -5,6 +5,7 @@ import io
 import re
 import requests
 import threading
+import time
 
 from django.conf import settings
 from rest_framework.views import APIView
@@ -121,7 +122,7 @@ class SmilesPredictionAPIView(APIView):
         if not lr_id_value:
             lr_id_value = "1"
 
-        # Temp_Ligand_ID: we only have SMILES, so default to lig_1 unless frontend supplies a ligand_name (rare)
+        # Temp_Ligand_ID: we only have SMILES, so default to lig_1 unless frontend supplies a ligand_name
         ligand_id = payload.get("temp_ligand_id") or payload.get(lig_id_col_name) or ""
         ligand_id = ligand_id.strip() if isinstance(ligand_id, str) else ""
         if not ligand_id:
@@ -130,7 +131,7 @@ class SmilesPredictionAPIView(APIView):
             sanitized = _sanitize_identifier(ligand_name)
             ligand_id = sanitized if sanitized else "lig_1"
 
-        # TempRecID: default to TRec1 unless frontend supplies a receptor_name/id (frontend won't)
+        # TempRecID
         rec_id = payload.get("temp_rec_id") or payload.get(rec_id_col_name) or ""
         rec_id = rec_id.strip() if isinstance(rec_id, str) else ""
         if not rec_id:
@@ -139,17 +140,16 @@ class SmilesPredictionAPIView(APIView):
             sanitized_rec = _sanitize_identifier(receptor_name)
             rec_id = sanitized_rec if sanitized_rec else "TRec1"
 
-        # Build CSV with order: ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID
+        # Build CSV
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer, lineterminator="\n")
         header = [lr_id_col_name, lig_id_col_name, lig_col_name, rec_col_name, rec_id_col_name]
         writer.writerow(header)
         writer.writerow([lr_id_value, ligand_id, smiles, receptor_seq or "", rec_id])
-
         csv_bytes = csv_buffer.getvalue().encode("utf-8")
         csv_buffer.close()
 
-        # Save CSV under JOB_DATA_DIR/<job_id>/<job_id>.csv or /tmp fallback
+        # Save CSV
         job_id = str(uuid.uuid4())
         csv_filename = f"{job_id}.csv"
         try:
@@ -157,12 +157,24 @@ class SmilesPredictionAPIView(APIView):
                 job_dir = os.path.join(JOB_DATA_DIR, job_id)
             else:
                 job_dir = os.path.join("/tmp", "smiles_jobs", job_id)
+
             os.makedirs(job_dir, exist_ok=True)
             csv_path = os.path.join(job_dir, csv_filename)
+
             with open(csv_path, "wb") as fh:
                 fh.write(csv_bytes)
+
+            # ------------------------------------------------------------------
+            #   WAIT UNTIL FILE IS ACTUALLY WRITTEN (your request)
+            # ------------------------------------------------------------------
+            for _ in range(25):   # ~250 ms max
+                if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+                    break
+                time.sleep(0.01)
+
             if DEBUG_LOG:
-                print(f"[SMILES] Saved CSV to disk: {csv_path}")
+                print(f"[SMILES] Saved CSV to disk: {csv_path}  (size={os.path.getsize(csv_path)})")
+
         except Exception as e:
             if DEBUG_LOG:
                 print(f"[SMILES] Error saving CSV to disk for job {job_id}: {e}")
@@ -175,7 +187,7 @@ class SmilesPredictionAPIView(APIView):
                 print("[SMILES] CSV preview: <decode error>")
 
         # ------------------------------------------------------------------
-        #  ASYNCHRONOUS PIPELINE SUBMISSION (replaces blocking requests.post)
+        #  ASYNCHRONOUS PIPELINE SUBMISSION
         # ------------------------------------------------------------------
 
         if not PREDICT_DOCKER_URL:
@@ -204,18 +216,16 @@ class SmilesPredictionAPIView(APIView):
                 if DEBUG_LOG:
                     print(f"[ASYNC] Pipeline responded for {job_id} with {resp.status_code}")
 
-                if resp.status_code >= 400:
-                    if DEBUG_LOG:
-                        print(f"[ASYNC] Pipeline rejected job {job_id}: {resp.text}")
+                if resp.status_code >= 400 and DEBUG_LOG:
+                    print(f"[ASYNC] Pipeline rejected job {job_id}: {resp.text}")
 
             except Exception as e:
                 if DEBUG_LOG:
                     print(f"[ASYNC] Error for job {job_id}: {e}")
 
-        # Run in background thread
         threading.Thread(target=async_submit, daemon=True).start()
 
-        # Optional scheduler bookkeeping (non-blocking)
+        # Optional scheduler
         if ENABLE_SCHEDULER:
             try:
                 schedule_job(job_id, lambda j: None)
@@ -223,8 +233,6 @@ class SmilesPredictionAPIView(APIView):
                 if DEBUG_LOG:
                     print(f"[SCHEDULER] Failed to schedule job {job_id}")
 
-        # ----------------------------------------------------------
-        #  RETURN IMMEDIATELY — DO NOT WAIT FOR DOCKER PIPELINE
-        # ----------------------------------------------------------
+        # Return fast
         return Response({"job_id": job_id, "message": "Job submitted to pipeline asynchronously."},
                         status=status.HTTP_200_OK)
