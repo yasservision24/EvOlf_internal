@@ -15,6 +15,10 @@ class Command(BaseCommand):
         df = pd.read_csv(csv_path)
         df.fillna("", inplace=True)
 
+        # Drop unwanted columns if present
+        drop_cols = ["UniProt_from_m2or", "3d Structure", "Image"]
+        df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore')
+
         self.stdout.write(self.style.NOTICE(f"🔢 Total rows: {len(df)}"))
 
         # -------------------------------------------------
@@ -50,19 +54,14 @@ class Command(BaseCommand):
                 InChiKey=row.get("InChiKey", ""),
                 InChi=row.get("InChi", ""),
                 IUPAC_Name=row.get("IUPAC Name", ""),
-                Method=row.get("Method", ""),
-                Expression_System=row.get("Expression System", ""),
-                Parameter=row.get("Parameter", ""),
-                Value=row.get("Value", ""),
-                Unit=row.get("Unit", ""),
                 Source=row.get("Source", ""),
                 Model=row.get("Model", ""),
-                Image=row.get("Image", ""),
-                Structure_3D=row.get("3d Structure", ""),
                 PubChem_Link=row.get("PubChem_Link", ""),
                 Source_Links=row.get("Source_Links", ""),
                 UniProt_Link=row.get("UniProt_Link", ""),
-                Comments=""
+                Value=row.get("Value", ""),
+                Method=row.get("Method", ""),
+                Comments=row.get("Comments", "")
             )
             objects.append(obj)
 
@@ -71,5 +70,4 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(f"✅ Successfully imported {len(objects)} new records into PostgreSQL!")
         )
-
 #python manage.py import_evolf_data core/management/evolf_data.csv
