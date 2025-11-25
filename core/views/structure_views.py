@@ -147,9 +147,9 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "structure3d": structure3d_url,
         "sdfFile": sdf_file_url,
         "expressionSystem": gf("Expression System") or "",
-        "parameter": gf("Parameter") or "",
+        
         "value": str(gf("Value") or ""),
-        "unit": gf("Unit") or "",
+        "method": gf("Method") or "",
         "comments": gf("Comment") or "",
        "sourceLinks":gf("Source_Links") or "",
        "source":gf("Source") or "",
