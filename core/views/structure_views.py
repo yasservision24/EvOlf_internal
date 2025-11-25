@@ -134,7 +134,7 @@ def format_dataset_detail(entry: Dict, request=None) -> Dict:
         "chemblId": chembl_id,
         "chemblLink": gf("ChEMBL Link"),
         "pubchemId": cid,
-        "pubchemLink": gf("PubChem Link"),
+        "pubchemLink": gf("PubChem_Link"),
         "smiles": gf("SMILES") or "",
         "inchi": gf("InChi") or "",
         "inchiKey": gf("InChiKey") or "",
