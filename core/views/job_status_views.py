@@ -7,12 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-# prefer configured JOB_DATA_DIR, otherwise fallback to the host path you mentioned
-JOB_DATA_DIR = getattr(
-    settings,
-    "JOB_DATA_DIR",
-    "/16Tbdrive1/evolf/evolf_docker/pipeline_runs",
-)
+JOB_DATA_DIR = getattr(settings, "JOB_DATA_DIR", None)
 
 
 class JobStatusAPIView(APIView):
