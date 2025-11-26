@@ -17,7 +17,7 @@ BASE_DIR = CURRENT_FILE.parent.parent.parent  # project root
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
-
+PATH_AFTER_BASE_DIR=os.getenv('PATH_AFTER_BASE_DIR')
 
 # -------------------------------
 # Docker configerations from .env 
@@ -36,7 +36,7 @@ DEBUG_LOG = os.getenv("DEBUG_LOG", "0") == "1"
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-MEDIA_ROOT = BASE_DIR / 'EvOlf_internal/core/management'
+MEDIA_ROOT = BASE_DIR / PATH_AFTER_BASE_DIR
 MEDIA_URL = '/media/'   # Use relative URL here
 
 
@@ -154,6 +154,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # -------------------------------
 ELASTICSEARCH_DSL = {
     'default': {
-        'hosts': os.getenv('ELASTIC_HOST', 'http://localhost:9200'),
+        'hosts': os.getenv('ELASTIC_HOST'),
     },
 }
