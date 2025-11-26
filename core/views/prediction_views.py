@@ -200,7 +200,7 @@ class SmilesPredictionAPIView(APIView):
             return Response({"error": "Pipeline URL not configured"},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        pipeline_url = PREDICT_DOCKER_URL.rstrip("/") + "/pipeline/run"
+        pipeline_url = PREDICT_DOCKER_URL
 
         form_data = {
             "job_id": job_id,
