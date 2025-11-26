@@ -18,7 +18,8 @@ import json
 from core.models import EvOlf
 from core.serializers import EvOlfSerializer
 from core.views.structure_views import format_dataset_detail, FetchLocalStructureAPIView
-
+import pandas as pd
+from django.conf import settings
 
 # ES import
 try:
@@ -368,8 +369,7 @@ class DatasetDownloadAPIView(APIView):
 
 
 
-import pandas as pd
-from django.conf import settings
+
 
 
 def json_safe(obj):
