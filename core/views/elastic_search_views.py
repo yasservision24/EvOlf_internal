@@ -5,8 +5,8 @@ from django.views import View
 from elasticsearch import Elasticsearch
 import os
 
-ES_HOST = os.getenv("ELASTIC_HOST", "https://localhost:9200")
-ES_USERNAME = os.getenv("ELASTIC_USERNAME", "elastic")
+ES_HOST = os.getenv("ELASTIC_HOST","")
+ES_USERNAME = os.getenv("ELASTIC_USERNAME", "")
 ES_PASSWORD = os.getenv("ELASTIC_PASSWORD", "")
 
 es = Elasticsearch(
