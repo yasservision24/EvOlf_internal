@@ -21,9 +21,9 @@ media/
 .DS_Store
 *.log
 
-core/management/pdb_files/
-core/management/sdf_files/
-core/management/smiles_2d/
+core/management/media/pdb_files/
+core/management/media/sdf_files/
+core/management/media/smiles_2d/
 core/management/pdb_files_new/
 core/management/sdf_files_new/
 core/management/smiles_2d/
