@@ -18,7 +18,7 @@ media/
 # IDEs and system files
 .vscode/
 .idea/
-.DS_Store
+.DS_Store   
 *.log
 
 core/management/media/pdb_files/
