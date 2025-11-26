@@ -330,7 +330,7 @@ class DatasetDownloadAPIView(APIView):
     GET /api/dataset/download
     Pre-generates and caches a full ZIP once, reused afterward.
     """
-    CACHE_PATH = os.path.join(settings.PATH_AFTER_BASE_DIR_1s, "evolf_complete_dataset.zip")
+    CACHE_PATH = os.path.join(settings.BASE_DIR,settings.PATH_AFTER_BASE_DIR, "evolf_complete_dataset.zip")
 
     def get(self, request):
         if os.path.exists(self.CACHE_PATH):
