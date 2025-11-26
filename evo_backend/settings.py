@@ -18,6 +18,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 PATH_AFTER_BASE_DIR=os.getenv('PATH_AFTER_BASE_DIR')
+PATH_AFTER_BASE_DIR_1s=os.getenv('PATH_AFTER_BASE_DIR_1s')
 
 # -------------------------------
 # Docker configerations from .env 

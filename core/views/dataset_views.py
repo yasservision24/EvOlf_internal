@@ -329,7 +329,7 @@ class DatasetDownloadAPIView(APIView):
     GET /api/dataset/download
     Pre-generates and caches a full ZIP once, reused afterward.
     """
-    CACHE_PATH = os.path.join("core", "management", "evolf_complete_dataset.zip")
+    CACHE_PATH = os.path.join(settings.PATH_AFTER_BASE_DIR_1s, "evolf_complete_dataset.zip")
 
     def get(self, request):
         if os.path.exists(self.CACHE_PATH):
@@ -408,7 +408,7 @@ class FetchDatasetDetails(APIView):
     """
     def get(self, request, evolfId):
         try:
-            csv_path = os.path.join(settings.BASE_DIR,"EvOlf_internal", "core", "management", "evolf_data.csv")
+            csv_path = os.path.join(settings.BASE_DIR,settings.PATH_AFTER_BASE_DIR,"evolf_data.csv")
             if not os.path.exists(csv_path):
                 return Response({"error": "Dataset CSV not found", "path": csv_path}, status=status.HTTP_404_NOT_FOUND)
 
@@ -465,7 +465,7 @@ class DownloadByEvolfId(APIView):
         try:
             csv_path = os.path.join(
                 settings.BASE_DIR,
-                "EvOlf_internal", "core", "management",
+                settings.PATH_AFTER_BASE_DIR,
                 "evolf_data.csv"
             )
             df = pd.read_csv(csv_path)
