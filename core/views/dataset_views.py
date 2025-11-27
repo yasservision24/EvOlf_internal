@@ -180,10 +180,13 @@ class DatasetListAPIView(APIView):
         page_obj = paginator.paginate_queryset(qs, request)
         serializer = EvOlfSerializer(page_obj, many=True)
 
+        # Calculate filtered count (after filters are applied)
+        filtered_count = len(qs) if isinstance(qs, list) else qs.count()
+
         pagination_info = {
             "currentPage": page,
-            "totalPages": (len(qs) if isinstance(qs, list) else qs.count() + limit - 1) // limit,
-            "totalItems": len(qs) if isinstance(qs, list) else qs.count(),
+            "totalPages": (filtered_count + limit - 1) // limit,
+            "totalItems": filtered_count,
             "itemsPerPage": limit,
         }
 
@@ -194,12 +197,7 @@ class DatasetListAPIView(APIView):
             "uniqueMutationTypes": statistics["uniqueMutationTypes"],
         }
 
-        pagination_info = {
-            "currentPage": page,
-            "totalPages": (total_rows + limit - 1) // limit,
-            "totalItems": total_rows ,
-            "itemsPerPage": limit,
-            }
+        # Update statistics with search results count (before filters for filter options)
         statistics.update({"totalRows": total_rows})
 
                         
