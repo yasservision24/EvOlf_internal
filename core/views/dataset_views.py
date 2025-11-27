@@ -4,22 +4,22 @@ import json
 import zipfile
 import datetime
 import os
+import math
+import re
 
-from django.http import HttpResponse
-from django.http import JsonResponse, FileResponse, Http404
+from django.http import HttpResponse, JsonResponse, FileResponse, Http404
 from django.db.models import Q
 from django.contrib.postgres.search import TrigramSimilarity
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework import status
-import math
-import json
+import pandas as pd
+from django.conf import settings
+
 from core.models import EvOlf
 from core.serializers import EvOlfSerializer
 from core.views.structure_views import format_dataset_detail, FetchLocalStructureAPIView
-import pandas as pd
-from django.conf import settings
 
 # ES import
 try:
@@ -33,7 +33,7 @@ try:
     es = Elasticsearch(
         ES_HOST,
         basic_auth=(ES_USERNAME, ES_PASSWORD),
-        verify_certs=False  # Set to True if using HTTPS with valid certs
+        verify_certs=False
     )
 
     # Check if connection works
@@ -49,6 +49,220 @@ except Exception as e:
     ES_AVAILABLE = False
 
 # -------------------------------
+# Enhanced Search Functions
+# -------------------------------
+
+def build_elasticsearch_query(search_term, filters=None):
+    """
+    Build a robust Elasticsearch query with multiple search strategies
+    """
+    if not search_term:
+        # Return all results if no search term
+        query_body = {
+            "query": {"match_all": {}},
+            "size": 10000
+        }
+        
+        if filters:
+            filter_clauses = []
+            if filters.get('species'):
+                filter_clauses.append({"term": {"Species": filters['species']}})
+            if filters.get('class_filter'):
+                filter_clauses.append({"term": {"Class": filters['class_filter']}})
+            if filters.get('mutation_type'):
+                filter_clauses.append({"term": {"Mutation_Status": filters['mutation_type']}})
+            
+            if filter_clauses:
+                query_body["query"] = {"bool": {"filter": filter_clauses}}
+                
+        return query_body
+
+    # Check if search looks like an ID (alphanumeric with possible underscores/dashes)
+    is_id_like = re.match(r'^[a-zA-Z0-9_-]+$', search_term) if search_term else False
+    
+    # Check if search looks like a chemical identifier
+    is_chemical_like = any(char in search_term for char in ['@', '+', '-', '(', ')', '=', '#']) if search_term else False
+    
+    # Build the base query
+    base_query = {
+        "query": {
+            "bool": {
+                "should": [
+                    # Exact match on IDs (highest priority)
+                    {
+                        "multi_match": {
+                            "query": search_term,
+                            "fields": ["EvOlf_ID^10", "ChEMBL_ID^8", "UniProt_ID^8", "CID^8"],
+                            "type": "phrase",
+                            "boost": 5.0
+                        }
+                    } if is_id_like else {
+                        "multi_match": {
+                            "query": search_term,
+                            "fields": ["EvOlf_ID^10", "ChEMBL_ID^8", "UniProt_ID^8", "CID^8"],
+                            "boost": 3.0
+                        }
+                    },
+                    
+                    # Field-specific weighted search
+                    {
+                        "multi_match": {
+                            "query": search_term,
+                            "fields": [
+                                "EvOlf_ID^6",
+                                "Ligand^5", 
+                                "Receptor^5",
+                                "Species^4",
+                                "ChEMBL_ID^4",
+                                "UniProt_ID^4", 
+                                "CID^4",
+                                "Class^3",
+                                "Mutation^2",
+                                "Sequence^1"
+                            ],
+                            "type": "best_fields",
+                            "fuzziness": "AUTO",
+                            "boost": 2.0
+                        }
+                    },
+                    
+                    # Wildcard search for partial matches
+                    {
+                        "bool": {
+                            "should": [
+                                {"wildcard": {"EvOlf_ID": {"value": f"*{search_term}*", "case_insensitive": True}}},
+                                {"wildcard": {"Ligand": {"value": f"*{search_term}*", "case_insensitive": True}}},
+                                {"wildcard": {"Receptor": {"value": f"*{search_term}*", "case_insensitive": True}}},
+                                {"wildcard": {"Species": {"value": f"*{search_term}*", "case_insensitive": True}}},
+                                {"wildcard": {"ChEMBL_ID": {"value": f"*{search_term}*", "case_insensitive": True}}},
+                                {"wildcard": {"UniProt_ID": {"value": f"*{search_term}*", "case_insensitive": True}}}
+                            ]
+                        }
+                    },
+                    
+                    # Chemical-specific search if it looks like a chemical
+                    {
+                        "multi_match": {
+                            "query": search_term,
+                            "fields": ["Ligand^6", "SMILES^4"],
+                            "type": "phrase"
+                        }
+                    } if is_chemical_like else None,
+                    
+                    # Completion suggester for autocomplete
+                    {
+                        "match_phrase_prefix": {
+                            "Ligand": {
+                                "query": search_term,
+                                "boost": 1.5
+                            }
+                        }
+                    }
+                ],
+                "minimum_should_match": 1
+            }
+        },
+        "suggest": {
+            "autocomplete_suggest": {
+                "prefix": search_term,
+                "completion": {
+                    "field": "suggest",
+                    "fuzzy": {
+                        "fuzziness": 1
+                    }
+                }
+            },
+            "ligand_suggest": {
+                "text": search_term,
+                "term": {
+                    "field": "Ligand"
+                }
+            }
+        },
+        "highlight": {
+            "fields": {
+                "EvOlf_ID": {},
+                "Ligand": {},
+                "Receptor": {},
+                "Species": {},
+                "ChEMBL_ID": {},
+                "UniProt_ID": {}
+            }
+        },
+        "size": 10000
+    }
+    
+    # Remove None values from should clauses
+    base_query["query"]["bool"]["should"] = [clause for clause in base_query["query"]["bool"]["should"] if clause is not None]
+    
+    # Apply filters if provided
+    if filters:
+        filter_clauses = []
+        
+        if filters.get('species'):
+            filter_clauses.append({"term": {"Species": filters['species']}})
+        
+        if filters.get('class_filter'):
+            filter_clauses.append({"term": {"Class": filters['class_filter']}})
+            
+        if filters.get('mutation_type'):
+            filter_clauses.append({"term": {"Mutation_Status": filters['mutation_type']}})
+        
+        if filter_clauses:
+            base_query["query"]["bool"]["filter"] = filter_clauses
+    
+    return base_query
+
+def search_with_elasticsearch(search_term, filters=None):
+    """
+    Perform Elasticsearch search with enhanced functionality
+    """
+    if not ES_AVAILABLE:
+        return None, None, None
+    
+    try:
+        query_body = build_elasticsearch_query(search_term, filters)
+        response = es.search(index="evolf", body=query_body)
+        
+        # Extract results with highlighting
+        results = []
+        for hit in response.get("hits", {}).get("hits", []):
+            source = hit["_source"]
+            highlight = hit.get("highlight", {})
+            
+            result = {
+                "EvOlf_ID": source.get("EvOlf_ID"),
+                "Ligand": source.get("Ligand"),
+                "Receptor": source.get("Receptor"),
+                "Species": source.get("Species"),
+                "Class": source.get("Class"),
+                "Mutation_Status": source.get("Mutation_Status"),
+                "ChEMBL_ID": source.get("ChEMBL_ID"),
+                "UniProt_ID": source.get("UniProt_ID"),
+                "CID": source.get("CID"),
+                "highlight": highlight,
+                "score": hit.get("_score", 0)
+            }
+            results.append(result)
+        
+        # Extract autocomplete suggestions
+        suggestions = []
+        for sug in response.get("suggest", {}).get("autocomplete_suggest", []):
+            for opt in sug.get("options", []):
+                text = opt.get("text")
+                if text and text not in suggestions:
+                    suggestions.append(text)
+        
+        # Extract search metadata
+        total_hits = response.get("hits", {}).get("total", {}).get("value", 0)
+        
+        return [r["EvOlf_ID"] for r in results], suggestions, total_hits
+        
+    except Exception as e:
+        print(f"Elasticsearch search error: {e}")
+        return None, None, None
+
+# -------------------------------
 # Pagination
 # -------------------------------
 class StandardResultsSetPagination(PageNumberPagination):
@@ -56,14 +270,13 @@ class StandardResultsSetPagination(PageNumberPagination):
     page_size_query_param = 'limit'
     max_page_size = 1000
 
-
 # -------------------------------
-# Dataset List (with ES fallback)
+# Enhanced Dataset List (with robust ES fallback)
 # -------------------------------
 class DatasetListAPIView(APIView):
     """
     GET /api/dataset
-    Supports pagination, filtering, sorting, and search.
+    Supports pagination, filtering, sorting, and robust search.
     """
     def get(self, request):
         page = int(request.GET.get('page', 1))
@@ -75,45 +288,57 @@ class DatasetListAPIView(APIView):
         class_filter = request.GET.get('class') or request.GET.get('classFilter')
         mutation_type = request.GET.get('mutationType')
 
+        # Build filters dict
+        filters = {}
+        if species:
+            filters['species'] = species
+        if class_filter:
+            filters['class_filter'] = class_filter
+        if mutation_type:
+            filters['mutation_type'] = mutation_type
+
         # Base queryset
         base_qs = EvOlf.objects.all()
-        qs = EvOlf.objects.all()
 
-
-        # --- Step 1: Search Phase ---
+        # --- Step 1: Enhanced Search Phase ---
         results_ids_ordered = None
-        if search:
-            try:
-                if ES_AVAILABLE:
-                    body = {
-                        "query": {
-                            "bool": {
-                                "should": [
-                                    {"wildcard": {"EvOlf_ID": {"value": f"*{search}*", "case_insensitive": True}}},
-                                    {"wildcard": {"Receptor": {"value": f"*{search}*", "case_insensitive": True}}},
-                                    {"wildcard": {"Ligand": {"value": f"*{search}*", "case_insensitive": True}}},
-                                    {"wildcard": {"Species": {"value": f"*{search}*", "case_insensitive": True}}}
-                                ]
-                            }
-                        },
-                        "size": 10000
-                    }
-                    res = es.search(index="evolf", body=body)
-                    results_ids_ordered = [hit["_source"].get("EvOlf_ID") for hit in res["hits"]["hits"]]
-            except Exception:
-                results_ids_ordered = None
+        suggestions = []
+        search_metadata = {}
+        
+        if search or ES_AVAILABLE:
+            # Try enhanced ElasticSearch first
+            results_ids_ordered, suggestions, total_hits = search_with_elasticsearch(search, filters)
+            search_metadata = {
+                "totalHits": total_hits or 0,
+                "searchEngine": "elasticsearch" if results_ids_ordered else "postgres",
+                "query": search
+            }
 
-        # Fallback to Postgres trigram
+        # Fallback to Postgres search
         if search and not results_ids_ordered:
-            search_qs = base_qs.annotate(similarity=TrigramSimilarity('Receptor', search)) \
-                            .filter(similarity__gt=0.2) \
-                            .order_by('-similarity')
+            search_qs = base_qs.annotate(
+                similarity=TrigramSimilarity('Receptor', search) +
+                           TrigramSimilarity('Ligand', search) +
+                           TrigramSimilarity('Species', search)
+            ).filter(
+                Q(similarity__gt=0.1) |
+                Q(EvOlf_ID__icontains=search) |
+                Q(Ligand__icontains=search) |
+                Q(Receptor__icontains=search) |
+                Q(Species__icontains=search) |
+                Q(ChEMBL_ID__icontains=search) |
+                Q(UniProt_ID__icontains=search)
+            ).order_by('-similarity')
+            
+            search_metadata["searchEngine"] = "postgres"
         elif results_ids_ordered:
+            # Use ES results
             preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
             search_qs = EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered)
             search_qs = sorted(search_qs, key=lambda o: preserved.get(o.EvOlf_ID, 999999))
         else:
-            search_qs = base_qs  # no search term
+            # No search term, use base queryset
+            search_qs = base_qs
 
         # --- Step 2: Build Search Statistics (before filters)
         if isinstance(search_qs, list):
@@ -132,10 +357,10 @@ class DatasetListAPIView(APIView):
             "uniqueClasses": unique_classes,
             "uniqueSpecies": unique_species,
             "uniqueMutationTypes": unique_mutation_types,
+            **search_metadata
         }
 
         # --- Step 3: Apply Filters ---
-        # --- Apply filters
         def apply_filters_to_queryset(queryset):
             if species:
                 queryset = queryset.filter(Species__iexact=species)
@@ -155,16 +380,14 @@ class DatasetListAPIView(APIView):
                 filtered = [obj for obj in filtered if getattr(obj, "Mutation_Status", None) == mutation_type]
             return filtered
         
-        # --- Maintain ES ordering
+        # --- Apply filters maintaining ES ordering if available
         if results_ids_ordered:
             preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
             qs = list(EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered))
             qs.sort(key=lambda o: preserved.get(o.EvOlf_ID, 999999))
             qs = apply_filters_to_list(qs)
         else:
-            qs = apply_filters_to_queryset(qs)
-
-
+            qs = apply_filters_to_queryset(search_qs)
 
         # --- Step 4: Sorting ---
         if isinstance(qs, list):
@@ -185,7 +408,7 @@ class DatasetListAPIView(APIView):
 
         pagination_info = {
             "currentPage": page,
-            "totalPages": (filtered_count + limit - 1) // limit,
+            "totalPages": math.ceil(filtered_count / limit) if limit > 0 else 1,
             "totalItems": filtered_count,
             "itemsPerPage": limit,
         }
@@ -197,29 +420,25 @@ class DatasetListAPIView(APIView):
             "uniqueMutationTypes": statistics["uniqueMutationTypes"],
         }
 
-        # Update statistics with search results count (before filters for filter options)
+        # Update statistics with search results count
         statistics.update({"totalRows": total_rows})
 
-                        
         return Response({
             "data": serializer.data,
             "pagination": pagination_info,
             "statistics": statistics,
             "filterOptions": filter_options,
+            "suggestions": suggestions[:10],  # Return top 10 suggestions
             "all_evolf_ids": [obj.EvOlf_ID for obj in qs],
         })
 
-        
-
-
 # -------------------------------
-# Dataset Export (2 modes)
+# Enhanced Dataset Export
 # -------------------------------
 class DatasetExportAPIView(APIView):
     """
     POST /api/dataset/export
-    Case A: body = {"evolfIds": [...]} → export those
-    Case B: body = filters (species, class, search, etc.) → re-run query and export results
+    Uses enhanced search functionality
     """
     def post(self, request):
         data = request.data
@@ -229,7 +448,7 @@ class DatasetExportAPIView(APIView):
         if isinstance(evolf_ids, list) and len(evolf_ids) > 0:
             qs = EvOlf.objects.filter(EvOlf_ID__in=evolf_ids)
         else:
-            # --- CASE B: no IDs -> re-run query logic
+            # --- CASE B: no IDs -> re-run enhanced query logic
             search = data.get('search', '').strip()
             species = data.get('species')
             class_filter = data.get('class') or data.get('classFilter')
@@ -237,7 +456,18 @@ class DatasetExportAPIView(APIView):
             sort_by = data.get('sortBy', 'EvOlf_ID')
             sort_order = data.get('sortOrder', 'desc')
 
+            # Build filters
+            filters = {}
+            if species:
+                filters['species'] = species
+            if class_filter:
+                filters['class_filter'] = class_filter
+            if mutation_type:
+                filters['mutation_type'] = mutation_type
+
             qs = EvOlf.objects.all()
+            
+            # Apply basic filters first
             if species:
                 qs = qs.filter(Species__iexact=species)
             if class_filter:
@@ -245,33 +475,22 @@ class DatasetExportAPIView(APIView):
             if mutation_type:
                 qs = qs.filter(Mutation_Status__iexact=mutation_type)
 
-            # Try ElasticSearch first
+            # Enhanced ElasticSearch search
             results_ids_ordered = None
             if search and ES_AVAILABLE:
-                try:
-                    body = {
-                        "query": {
-                            "bool": {
-                                "should": [
-                                    {"wildcard": {"EvOlf_ID": {"value": f"*{search}*", "case_insensitive": True}}},
-                                    {"wildcard": {"Receptor": {"value": f"*{search}*", "case_insensitive": True}}},
-                                    {"wildcard": {"Ligand": {"value": f"*{search}*", "case_insensitive": True}}},
-                                    {"wildcard": {"Species": {"value": f"*{search}*", "case_insensitive": True}}}
-                                ]
-                            }
-                        },
-                        "size": 10000
-                    }
-                    res = es.search(index="evolf", body=body)
-                    results_ids_ordered = [hit["_source"].get("EvOlf_ID") for hit in res["hits"]["hits"]]
-                except Exception:
-                    results_ids_ordered = None
+                results_ids_ordered, _, _ = search_with_elasticsearch(search, filters)
 
             # Fallback to trigram
             if search and not results_ids_ordered:
-                qs = qs.annotate(similarity=TrigramSimilarity('Receptor', search)) \
-                       .filter(similarity__gt=0.2) \
-                       .order_by('-similarity')
+                qs = qs.annotate(
+                    similarity=TrigramSimilarity('Receptor', search) +
+                               TrigramSimilarity('Ligand', search)
+                ).filter(
+                    Q(similarity__gt=0.1) |
+                    Q(EvOlf_ID__icontains=search) |
+                    Q(Ligand__icontains=search) |
+                    Q(Receptor__icontains=search)
+                ).order_by('-similarity')
 
             # Maintain ES order
             if results_ids_ordered:
@@ -280,19 +499,16 @@ class DatasetExportAPIView(APIView):
                 qs = sorted(qs, key=lambda o: preserved.get(o.EvOlf_ID, 999999))
 
             # Sorting
-                        
             if isinstance(qs, list):
                 reverse = sort_order == "desc"
                 qs = sorted(qs, key=lambda x: getattr(x, sort_by, ""), reverse=reverse)
-
             else:
                 ordering = sort_by if sort_order == "asc" else f"-{sort_by}"
                 qs = qs.order_by(ordering)
 
-
         # --- No records found
         if not qs:
-            return Response({"error": "No records found for given filters or IDs"}, status=404)
+            return Response({"message": "No records found for given filters or IDs"}, status=404)
 
         # --- Build ZIP
         csv_buffer = io.StringIO()
@@ -302,7 +518,6 @@ class DatasetExportAPIView(APIView):
             'Mutation_Status', 'Mutation', 'ChEMBL_ID', 'UniProt_ID', 'CID'
         ]
 
-        
         writer.writerow(fields)
         for obj in qs:
             writer.writerow([getattr(obj, f, '') for f in fields])
@@ -311,18 +526,20 @@ class DatasetExportAPIView(APIView):
             "exportDate": datetime.datetime.utcnow().isoformat() + 'Z',
             "totalRecords": len(qs),
             "format": "csv",
-            "version": "1.0"
+            "version": "1.0",
+            "searchUsed": "enhanced" if ES_AVAILABLE else "basic"
         }
+        
         mem_zip = io.BytesIO()
         with zipfile.ZipFile(mem_zip, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("data.csv", csv_buffer.getvalue())
             zf.writestr("metadata.json", json.dumps(metadata, indent=2))
             zf.writestr("README.txt", "EvoLF dataset export containing filtered data.")
         mem_zip.seek(0)
+        
         response = HttpResponse(mem_zip.read(), content_type="application/zip")
         response["Content-Disposition"] = "attachment; filename=evolf_filtered_export.zip"
         return response
-
 
 # -------------------------------
 # Complete dataset ZIP
@@ -332,7 +549,7 @@ class DatasetDownloadAPIView(APIView):
     GET /api/dataset/download
     Pre-generates and caches a full ZIP once, reused afterward.
     """
-    CACHE_PATH = os.path.join(settings.BASE_DIR,settings.PATH_AFTER_BASE_DIR, "evolf_complete_dataset.zip")
+    CACHE_PATH = os.path.join(settings.BASE_DIR, settings.PATH_AFTER_BASE_DIR, "evolf_complete_dataset.zip")
 
     def get(self, request):
         if os.path.exists(self.CACHE_PATH):
@@ -369,11 +586,6 @@ class DatasetDownloadAPIView(APIView):
         response["Content-Disposition"] = "attachment; filename=evolf_complete_dataset.zip"
         return response
 
-
-
-
-
-
 def json_safe(obj):
     """Recursively convert non-serializable / NaN / inf values to None or strings."""
     if isinstance(obj, float):
@@ -386,19 +598,6 @@ def json_safe(obj):
         return [json_safe(v) for v in obj]
     return obj
 
-
-from core.views.structure_views import format_dataset_detail, FetchLocalStructureAPIView
-
-import os
-from django.conf import settings
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from core.models import EvOlf
-from core.views.structure_views import format_dataset_detail
-
-
-
 # ============================================================
 # 1️⃣ FETCH DATASET DETAILS
 # ============================================================
@@ -410,7 +609,7 @@ class FetchDatasetDetails(APIView):
     """
     def get(self, request, evolfId):
         try:
-            csv_path = os.path.join(settings.BASE_DIR,settings.PATH_AFTER_BASE_DIR,"evolf_data.csv")
+            csv_path = os.path.join(settings.BASE_DIR, settings.PATH_AFTER_BASE_DIR, "evolf_data.csv")
             if not os.path.exists(csv_path):
                 return Response({"error": "Dataset CSV not found", "path": csv_path}, status=status.HTTP_404_NOT_FOUND)
 
