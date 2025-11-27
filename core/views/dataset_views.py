@@ -27,7 +27,7 @@ try:
 
     # Load environment variables
     ES_HOST = os.getenv("ELASTIC_HOST", "http://localhost:9200")
-    ES_USERNAME = os.getenv("ELASTIC_USERNAME", "elastic")
+    ES_USERNAME = os.getenv("ELASTIC_USERNAME", "")
     ES_PASSWORD = os.getenv("ELASTIC_PASSWORD", "")
 
     es = Elasticsearch(
