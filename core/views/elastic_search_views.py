@@ -53,7 +53,7 @@ class ElasticSearchView(View):
                     "completion": {"field": "suggest"}
                 }
             },
-            "size": 50
+            "size": 1000
         }
 
         try:

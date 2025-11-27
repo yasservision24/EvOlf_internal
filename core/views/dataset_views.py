@@ -89,12 +89,14 @@ class DatasetListAPIView(APIView):
                         "query": {
                             "bool": {
                                 "should": [
+                                    {"wildcard": {"EvOlf_ID": {"value": f"*{search}*", "case_insensitive": True}}},
                                     {"wildcard": {"Receptor": {"value": f"*{search}*", "case_insensitive": True}}},
                                     {"wildcard": {"Ligand": {"value": f"*{search}*", "case_insensitive": True}}},
                                     {"wildcard": {"Species": {"value": f"*{search}*", "case_insensitive": True}}}
                                 ]
                             }
-                        }
+                        },
+                        "size": 10000
                     }
                     res = es.search(index="evolf", body=body)
                     results_ids_ordered = [hit["_source"].get("EvOlf_ID") for hit in res["hits"]["hits"]]
@@ -253,12 +255,14 @@ class DatasetExportAPIView(APIView):
                         "query": {
                             "bool": {
                                 "should": [
+                                    {"wildcard": {"EvOlf_ID": {"value": f"*{search}*", "case_insensitive": True}}},
                                     {"wildcard": {"Receptor": {"value": f"*{search}*", "case_insensitive": True}}},
                                     {"wildcard": {"Ligand": {"value": f"*{search}*", "case_insensitive": True}}},
                                     {"wildcard": {"Species": {"value": f"*{search}*", "case_insensitive": True}}}
                                 ]
                             }
-                        }
+                        },
+                        "size": 10000
                     }
                     res = es.search(index="evolf", body=body)
                     results_ids_ordered = [hit["_source"].get("EvOlf_ID") for hit in res["hits"]["hits"]]
