@@ -30,6 +30,10 @@ DEFAULT_LIG_ID_COL = "Temp_Ligand_ID"
 DEFAULT_REC_ID_COL = "TempRecID"
 DEFAULT_LR_ID_COL = "ID"
 
+# Validation constants
+MAX_SMILES_LENGTH = 512
+MAX_RECEPTOR_LENGTH = 1024
+ALLOWED_AMINO_ACIDS = "ARNDCQEGHILKMFPSTWYV"
 
 # ----------------------------------------------------------------------
 # Utility functions
@@ -46,7 +50,7 @@ def _sanitize_identifier(s: str) -> str:
 
 
 _SMILES_ALLOWED_RE = re.compile(r'^[A-Za-z0-9@\+\-\[\]\(\)=#\/\\%.:\*]+$')
-_RECEPTOR_AA_RE = re.compile(r'^[ACDEFGHIKLMNPQRSTVWYBXZJUO]+$', re.I)
+_RECEPTOR_AA_RE = re.compile(r'^[ARNDCQEGHILKMFPSTWYV]+$', re.I)
 
 
 # ----------------------------------------------------------------------
@@ -97,6 +101,14 @@ class SmilesPredictionAPIView(APIView):
             return Response({"error": "'smiles' is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         smiles = smiles.strip()
+        
+        # Check SMILES length
+        if len(smiles) > MAX_SMILES_LENGTH:
+            return Response(
+                {"error": f"for ligand SMILES, the characters have to be less than {MAX_SMILES_LENGTH}."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         if re.search(r"\s", smiles):
             return Response({"error": "SMILES contains whitespace."}, status=status.HTTP_400_BAD_REQUEST)
         if not _SMILES_ALLOWED_RE.match(smiles):
@@ -114,12 +126,23 @@ class SmilesPredictionAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if receptor_seq:
+                # Check receptor sequence length
+                if len(receptor_seq) > MAX_RECEPTOR_LENGTH:
+                    return Response(
+                        {"error": f"for receptor sequence, the number of amino acids need to be less than {MAX_RECEPTOR_LENGTH}."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
                 if re.search(r"\s", receptor_seq):
                     return Response({"error": "Receptor sequence contains whitespace."},
                                     status=status.HTTP_400_BAD_REQUEST)
+                
+                # Check for valid amino acids only
                 if not _RECEPTOR_AA_RE.match(receptor_seq):
-                    return Response({"error": "Invalid amino-acid letters in sequence."},
-                                    status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {"error": f"for receptor sequence, only these amino acids are allowed: \"{ALLOWED_AMINO_ACIDS}\". If any other alphabet or character is present, they get an error."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
         else:
             receptor_seq = ""
 
