@@ -66,6 +66,9 @@ class ElasticSearchView(View):
                     "Receptor": hit["_source"].get("Receptor"),
                     "Species": hit["_source"].get("Species"),
                     "Sequence": hit["_source"].get("Sequence"),
+                    "UniProt_ID": hit["_source"].get("UniProt_ID"),
+                    "CID": hit["_source"].get("CID"),
+                    "ChEMBL_ID": hit["_source"].get("ChEMBL_ID"),
                 }
                 for hit in response.get("hits", {}).get("hits", [])
             ]
