@@ -57,10 +57,11 @@ def build_elasticsearch_query(search_term, filters=None):
     Build a robust Elasticsearch query with multiple search strategies
     """
     if not search_term:
-        # Return all results if no search term
+        # Return all results if no search term - no size limit for retrieving IDs
         query_body = {
             "query": {"match_all": {}},
-            "size": 10000
+            "_source": ["EvOlf_ID"],  # Only retrieve EvOlf_ID for efficiency
+            "size": 10000  # Max window size in ES, but we'll handle this via scrolling if needed
         }
         
         if filters:
@@ -189,7 +190,7 @@ def build_elasticsearch_query(search_term, filters=None):
                 "UniProt_ID": {}
             }
         },
-        "size": 10000
+        "size": 10000  # Max window size in ES
     }
     
     # Remove None values from should clauses
@@ -305,16 +306,17 @@ class DatasetListAPIView(APIView):
         suggestions = []
         search_metadata = {}
         
-        if search or ES_AVAILABLE:
-            # Try enhanced ElasticSearch first
+        # Only use Elasticsearch if there's a search term OR if filters are applied
+        if search:
+            # Try enhanced ElasticSearch first for search queries
             results_ids_ordered, suggestions, total_hits = search_with_elasticsearch(search, filters)
             search_metadata = {
                 "totalHits": total_hits or 0,
                 "searchEngine": "elasticsearch" if results_ids_ordered else "postgres",
                 "query": search
             }
-
-        # Fallback to Postgres search
+        
+        # Fallback to Postgres search if ES didn't work or not available
         if search and not results_ids_ordered:
             search_qs = base_qs.annotate(
                 similarity=TrigramSimilarity('Receptor', search) +
@@ -337,7 +339,7 @@ class DatasetListAPIView(APIView):
             search_qs = EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered)
             search_qs = sorted(search_qs, key=lambda o: preserved.get(o.EvOlf_ID, 999999))
         else:
-            # No search term, use base queryset
+            # No search term - use base queryset (all data)
             search_qs = base_qs
 
         # --- Step 2: Build Search Statistics (before filters)
