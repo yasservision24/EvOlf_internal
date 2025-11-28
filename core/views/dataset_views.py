@@ -308,7 +308,9 @@ class DatasetListAPIView(APIView):
         # Only use Elasticsearch if there's a search term OR if filters are applied
         if search:
             # Try enhanced ElasticSearch first for search queries
-            results_ids_ordered, suggestions, total_hits = search_with_elasticsearch(search, filters)
+            results_ids_ordered, es_suggestions, total_hits = search_with_elasticsearch(search, filters)
+            # Ensure suggestions is always a list (ES may return None on error)
+            suggestions = es_suggestions if es_suggestions is not None else []
             search_metadata = {
                 "totalHits": total_hits or 0,
                 "searchEngine": "elasticsearch" if results_ids_ordered else "postgres",
