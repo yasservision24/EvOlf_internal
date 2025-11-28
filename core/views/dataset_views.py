@@ -334,10 +334,9 @@ class DatasetListAPIView(APIView):
             
             search_metadata["searchEngine"] = "postgres"
         elif results_ids_ordered:
-            # Use ES results
+            # Use ES results - keep as queryset, don't convert to list yet
             preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
             search_qs = EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered)
-            search_qs = sorted(search_qs, key=lambda o: preserved.get(o.EvOlf_ID, 999999))
         else:
             # No search term - use base queryset (all data)
             search_qs = base_qs
@@ -382,14 +381,19 @@ class DatasetListAPIView(APIView):
                 filtered = [obj for obj in filtered if getattr(obj, "Mutation_Status", None) == mutation_type]
             return filtered
         
-        # --- Apply filters maintaining ES ordering if available
-        if results_ids_ordered:
-            preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
-            qs = list(EvOlf.objects.filter(EvOlf_ID__in=results_ids_ordered))
-            qs.sort(key=lambda o: preserved.get(o.EvOlf_ID, 999999))
-            qs = apply_filters_to_list(qs)
+        # --- Apply filters
+        if isinstance(search_qs, list):
+            # Already a list from ES results
+            qs = apply_filters_to_list(search_qs)
         else:
+            # Queryset - apply filters
             qs = apply_filters_to_queryset(search_qs)
+            
+            # If we have ES ordering, apply it now
+            if results_ids_ordered:
+                preserved = {eid: i for i, eid in enumerate(results_ids_ordered)}
+                qs = list(qs)
+                qs.sort(key=lambda o: preserved.get(o.EvOlf_ID, 999999))
 
         # --- Step 4: Sorting ---
         if isinstance(qs, list):
