@@ -9,7 +9,6 @@ import re
 
 from django.http import HttpResponse, JsonResponse, FileResponse, Http404
 from django.db.models import Q
-from django.contrib.postgres.search import TrigramSimilarity
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -318,19 +317,16 @@ class DatasetListAPIView(APIView):
         
         # Fallback to Postgres search if ES didn't work or not available
         if search and not results_ids_ordered:
-            search_qs = base_qs.annotate(
-                similarity=TrigramSimilarity('Receptor', search) +
-                           TrigramSimilarity('Ligand', search) +
-                           TrigramSimilarity('Species', search)
-            ).filter(
-                Q(similarity__gt=0.1) |
+            # Use simple icontains search (no pg_trgm extension required)
+            search_qs = base_qs.filter(
                 Q(EvOlf_ID__icontains=search) |
                 Q(Ligand__icontains=search) |
                 Q(Receptor__icontains=search) |
                 Q(Species__icontains=search) |
                 Q(ChEMBL_ID__icontains=search) |
-                Q(UniProt_ID__icontains=search)
-            ).order_by('-similarity')
+                Q(UniProt_ID__icontains=search) |
+                Q(CID__icontains=search)
+            )
             
             search_metadata["searchEngine"] = "postgres"
         elif results_ids_ordered:
