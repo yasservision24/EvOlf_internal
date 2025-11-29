@@ -100,7 +100,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         # 'anon' covers all users since you have no login
         # Format examples: '100/day', '10/minute', '5/second'
-        'anon': '60/minute', 
+        'anon': '500/minute', 
     }
 }
 
