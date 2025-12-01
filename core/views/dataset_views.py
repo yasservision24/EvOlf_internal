@@ -92,14 +92,14 @@ def build_elasticsearch_query(search_term, filters=None):
                     {
                         "multi_match": {
                             "query": search_term,
-                            "fields": ["EvOlf_ID^10","Receptor^8" ,"Ligand^8" "UniProt_ID^8", "CID^8"],
+                            "fields": ["EvOlf_ID^10","Receptor^9" ,"Ligand^8" "UniProt_ID^8", "CID^8"],
                             "type": "phrase",
                             "boost": 5.0
                         }
                     } if is_id_like else {
                         "multi_match": {
                             "query": search_term,
-                            "fields":["EvOlf_ID^10","Receptor^8" ,"Ligand^8" "UniProt_ID^8", "CID^8"],
+                            "fields": ["EvOlf_ID^10","Receptor^9" ,"Ligand^8" "UniProt_ID^8", "CID^8"],
                             "boost": 3.0
                         }
                     },
@@ -134,7 +134,7 @@ def build_elasticsearch_query(search_term, filters=None):
                                 {"wildcard": {"Ligand": {"value": f"*{search_term}*", "case_insensitive": True}}},
                                 {"wildcard": {"Receptor": {"value": f"*{search_term}*", "case_insensitive": True}}},
                                 {"wildcard": {"Species": {"value": f"*{search_term}*", "case_insensitive": True}}},
-                                {"wildcard": {"ChEMBL_ID": {"value": f"*{search_term}*", "case_insensitive": True}}},
+                                {"wildcard": {"CID": {"value": f"*{search_term}*", "case_insensitive": True}}},
                                 {"wildcard": {"UniProt_ID": {"value": f"*{search_term}*", "case_insensitive": True}}}
                             ]
                         }
@@ -185,7 +185,7 @@ def build_elasticsearch_query(search_term, filters=None):
                 "Ligand": {},
                 "Receptor": {},
                 "Species": {},
-                "ChEMBL_ID": {},
+                "CID": {},
                 "UniProt_ID": {}
             }
         },
