@@ -394,7 +394,11 @@ class DatasetListAPIView(APIView):
                 qs.sort(key=lambda o: preserved.get(o.EvOlf_ID, 999999))
 
         # --- Step 4: Sorting ---
-        if isinstance(qs, list):
+        # Skip sorting if sortBy is "relevance" and we have ES results (preserve ES relevance order)
+        if sort_by == "relevance" and results_ids_ordered:
+            # Keep ES relevance order - already sorted by relevance above
+            pass
+        elif isinstance(qs, list):
             reverse = sort_order == "desc"
             qs = sorted(qs, key=lambda x: getattr(x, sort_by, ""), reverse=reverse)
         else:
