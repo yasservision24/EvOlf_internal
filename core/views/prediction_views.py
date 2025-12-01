@@ -105,7 +105,7 @@ class SmilesPredictionAPIView(APIView):
         # Check SMILES length
         if len(smiles) > MAX_SMILES_LENGTH:
             return Response(
-                {"error": f"for ligand SMILES, the characters have to be less than {MAX_SMILES_LENGTH}."},
+                {"error": f"Ligand SMILES exceeds the maximum limit of {MAX_SMILES_LENGTH}.Please provide a shorter SMILES "},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -129,7 +129,7 @@ class SmilesPredictionAPIView(APIView):
                 # Check receptor sequence length
                 if len(receptor_seq) > MAX_RECEPTOR_LENGTH:
                     return Response(
-                        {"error": f"for receptor sequence, the number of amino acids need to be less than {MAX_RECEPTOR_LENGTH}."},
+                        {"error": f"Receptor sequence exceeds the maximum allowed length of {MAX_RECEPTOR_LENGTH}.Please provide a shorter sequence."},
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
@@ -140,7 +140,7 @@ class SmilesPredictionAPIView(APIView):
                 # Check for valid amino acids only
                 if not _RECEPTOR_AA_RE.match(receptor_seq):
                     return Response(
-                        {"error": f"for receptor sequence, only these amino acids are allowed: \"{ALLOWED_AMINO_ACIDS}\". If any other alphabet or character is present, they get an error."},
+                        {"error": f"Invalid characters detected in the receptor sequence. Please use only the 20 standard amino acids (A, C, D, E, F, G, H, I, K, L, M, N, P, Q, R, S, T, V, W, Y)."},
                         status=status.HTTP_400_BAD_REQUEST
                     )
         else:
