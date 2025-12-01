@@ -92,14 +92,14 @@ def build_elasticsearch_query(search_term, filters=None):
                     {
                         "multi_match": {
                             "query": search_term,
-                            "fields": ["EvOlf_ID^10","Receptor^9" ,"Ligand^9" "UniProt_ID^9", "CID^9"],
+                            "fields": ["EvOlf_ID^10","Receptor^9" ,"Ligand^9" ,"UniProt_ID^9", "CID^9"],
                             "type": "phrase",
                             "boost": 5.0
                         }
                     } if is_id_like else {
                         "multi_match": {
                             "query": search_term,
-                            "fields": ["EvOlf_ID^10","Receptor^9" ,"Ligand^9" "UniProt_ID^9", "CID^9"],
+                            "fields": ["EvOlf_ID^10","Receptor^9" ,"Ligand^9", "UniProt_ID^9", "CID^9"],
                             "boost": 3.0
                         }
                     },
