@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Virtual environment
+venv/
+env/
+
+# Environment variables
+.env
+
+# Django stuff
+db.sqlite3
+/staticfiles/
+media/
+
+# IDEs and system files
+.vscode/
+.idea/
+.DS_Store   
+*.log
+
+core/management/media/pdb_files/
+core/management/media/sdf_files/
+core/management/media/smiles_2d/
+core/management/pdb_files_new/
+core/management/sdf_files_new/
+core/management/smiles_2d/
+core\management\evolf_complete_dataset.zip
+core\management\evolf_data
