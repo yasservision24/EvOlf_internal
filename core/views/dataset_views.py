@@ -521,10 +521,11 @@ class DatasetExportAPIView(APIView):
         # --- Build ZIP
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer)
-        fields = [
-            'EvOlf_ID', 'Receptor', 'Species', 'Class', 'Ligand',
-            'Mutation_Status', 'Mutation', 'ChEMBL_ID', 'UniProt_ID', 'CID'
-        ]
+        fields = ['EvOlf_ID', 'Class', 'Species', 'Receptor_ID', 'Receptor', 'UniProt_ID', 
+                  'Mutation_Status', 'Mutation', 'Mutation_Impact', 'Sequence', 'Receptor_SubType', 
+                  'Ligand_ID', 'Ligand', 'SMILES', 'CID', 'InChiKey', 'InChi', 'IUPAC_Name', 'Source',
+                    'Model', 'Source_Links', 'Value', 'Method']
+
 
         writer.writerow(fields)
         for obj in qs:
