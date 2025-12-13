@@ -66,43 +66,40 @@ class JobStatusAPIView(APIView):
 
     def _parse_prediction_results(self, output_dir: str, input_dir: str) -> list:
         """
-        Parse Prediction_Output.csv and input CSV to combine results.
+        Parse Prediction_Output.csv and input CSV to combine the single row.
         Returns list of dicts with: ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID, Predicted_Label, P1
         Converts 1 to "Agonist (1)" and 0 to "Non-Agonist (0)"
         """
         predictions = []
         
-        # Read output predictions
+        # Read the single output prediction
         output_csv_path = os.path.join(output_dir, "Prediction_Output.csv")
-        output_data = {}
+        predicted_label = ""
+        p1_score = ""
         
         if os.path.isfile(output_csv_path):
             try:
                 with open(output_csv_path, 'r', newline='', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
-                    for row in reader:
-                        # The output CSV should have 'ID' column that matches input CSV
-                        row_id = row.get('ID', '').strip()
-                        if row_id:
-                            # Get predicted label and convert to human-readable format
-                            pred_label_raw = row.get('Predicted Label', '').strip()
-                            # Convert 1 to "Agonist (1)" and 0 to "Non-Agonist (0)"
-                            if pred_label_raw == '1':
-                                pred_label = "Agonist (1)"
-                            elif pred_label_raw == '0':
-                                pred_label = "Non-Agonist (0)"
-                            else:
-                                pred_label = pred_label_raw  # Keep as is if not 0 or 1
-                            
-                            output_data[row_id] = {
-                                'predicted_label': pred_label,
-                                'p1': row.get('P1', '').strip()
-                            }
+                    rows = list(reader)
+                    if rows:  # If there's at least one row
+                        row = rows[0]  # Get the first (and only) row
+                        
+                        # Get predicted label and convert to human-readable format
+                        pred_label_raw = row.get('Predicted Label', '').strip()
+                        # Convert 1 to "Agonist (1)" and 0 to "Non-Agonist (0)"
+                        if pred_label_raw == '1':
+                            predicted_label = "Agonist (1)"
+                        elif pred_label_raw == '0':
+                            predicted_label = "Non-Agonist (0)"
+                        else:
+                            predicted_label = pred_label_raw  # Keep as is if not 0 or 1
+                        
+                        p1_score = row.get('P1', '').strip()
             except Exception as e:
                 print(f"Error reading output CSV: {e}")
-
+        
         # Read input CSV to get original data (ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID)
-        input_data = {}
         if os.path.isdir(input_dir):
             for fn in os.listdir(input_dir):
                 if fn.endswith('.csv'):
@@ -110,63 +107,23 @@ class JobStatusAPIView(APIView):
                     try:
                         with open(input_csv_path, 'r', newline='', encoding='utf-8') as f:
                             reader = csv.DictReader(f)
-                            for row in reader:
-                                # Use the actual ID column from input CSV (should be numeric string like "1", "2", etc.)
+                            rows = list(reader)
+                            if rows:  # If there's at least one row
+                                row = rows[0]  # Get the first (and only) row
                                 row_id = row.get('ID', '').strip()
                                 if row_id:
-                                    input_data[row_id] = {
+                                    predictions.append({
+                                        'id': row_id,
                                         'temp_ligand_id': row.get('Temp_Ligand_ID', '').strip(),
                                         'smiles': row.get('SMILES', '').strip(),
                                         'mutated_sequence': row.get('Mutated_Sequence', '').strip(),
-                                        'temp_rec_id': row.get('TempRecID', '').strip()
-                                    }
+                                        'temp_rec_id': row.get('TempRecID', '').strip(),
+                                        'predicted_label': predicted_label,
+                                        'p1': p1_score
+                                    })
                     except Exception as e:
                         print(f"Error reading input CSV: {e}")
                     break  # Only read first CSV found
-
-        # Combine output and input data using the ID as key
-        # First, try to match by ID
-        matched_ids = set()
-        for row_id, out_row in output_data.items():
-            in_row = input_data.get(row_id)
-            if in_row:
-                predictions.append({
-                    'id': row_id,
-                    'temp_ligand_id': in_row.get('temp_ligand_id', ''),
-                    'smiles': in_row.get('smiles', ''),
-                    'mutated_sequence': in_row.get('mutated_sequence', ''),
-                    'temp_rec_id': in_row.get('temp_rec_id', ''),
-                    'predicted_label': out_row.get('predicted_label', ''),
-                    'p1': out_row.get('p1', '')
-                })
-                matched_ids.add(row_id)
-            else:
-                # If no match found by ID, include output data only
-                predictions.append({
-                    'id': row_id,
-                    'temp_ligand_id': '',
-                    'smiles': '',
-                    'mutated_sequence': '',
-                    'temp_rec_id': '',
-                    'predicted_label': out_row.get('predicted_label', ''),
-                    'p1': out_row.get('p1', '')
-                })
-
-        # Also include any input rows that didn't have output predictions
-        for row_id, in_row in input_data.items():
-            if row_id not in matched_ids:
-                predictions.append({
-                    'id': row_id,
-                    'temp_ligand_id': in_row.get('temp_ligand_id', ''),
-                    'smiles': in_row.get('smiles', ''),
-                    'mutated_sequence': in_row.get('mutated_sequence', ''),
-                    'temp_rec_id': in_row.get('temp_rec_id', ''),
-                    'predicted_label': '',
-                    'p1': ''
-                })
-
-        # Sort by ID for consistent ordering
-        predictions.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 0)
         
         return predictions
 
