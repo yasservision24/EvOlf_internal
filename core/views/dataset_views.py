@@ -651,7 +651,17 @@ class FetchDatasetDetails(APIView):
 #  DOWNLOAD FILES AS ZIP
 # ============================================================
 
+# ============================================================
+#  DOWNLOAD FILES AS ZIP (simpler version with specific fields)
+# ============================================================
+
 class DownloadByEvolfId(APIView):
+    # Define which fields to include in the CSV download
+    CSV_FIELDS = ['EvOlf_ID', 'Class', 'Species', 'Receptor_ID', 'Receptor', 'UniProt_ID', 
+                  'Mutation_Status', 'Mutation', 'Mutation_Impact', 'Sequence', 'Receptor_SubType', 
+                  'Ligand_ID', 'Ligand', 'SMILES', 'CID', 'InChiKey', 'InChi', 'IUPAC_Name', 'Source',
+                    'Model', 'Source_Links', 'Value', 'Method']
+    
     def get(self, request, evolfId):
         base_dir = settings.MEDIA_ROOT
         files_to_zip = []
@@ -679,11 +689,54 @@ class DownloadByEvolfId(APIView):
                 "evolf_data.csv"
             )
             df = pd.read_csv(csv_path)
-            id_col = "EvOlf ID" if "EvOlf ID" in df.columns else "EvOlf_ID"
+            
+            # Handle column name variations
+            column_mapping = {}
+            for col in df.columns:
+                clean_col = col.strip()
+                if clean_col != col:
+                    column_mapping[col] = clean_col
+            
+            if column_mapping:
+                df = df.rename(columns=column_mapping)
+            
+            # Find EvOlf ID column
+            possible_id_cols = ['EvOlf_ID', 'EvOlf ID', 'EvOlfID', 'evolf_id']
+            id_col = None
+            for col in possible_id_cols:
+                if col in df.columns:
+                    id_col = col
+                    break
+            
+            if not id_col:
+                raise ValueError("No EvOlf ID column found in dataset")
+            
+            # Filter for the specific EvOlf ID
             row_df = df[df[id_col] == evolfId]
+            
+            # Select only the predefined fields (if they exist)
+            available_fields = []
+            for field in self.CSV_FIELDS:
+                if field in df.columns:
+                    available_fields.append(field)
+                else:
+                    # Try to find case-insensitive or spaced version
+                    for col in df.columns:
+                        if col.replace(' ', '_').lower() == field.replace(' ', '_').lower():
+                            available_fields.append(col)
+                            break
+            
+            # If no specific fields found, use all available fields
+            if not available_fields:
+                available_fields = list(df.columns)
+            
+            # Select only the requested fields
+            if not row_df.empty:
+                row_df = row_df[available_fields]
+                
         except Exception as e:
             row_df = pd.DataFrame()
-            print("Error fetching row data:", e)
+            print(f"Error fetching row data for {evolfId}: {e}")
 
         # 🧠 Step 2: Prepare ZIP
         zip_filename = f"{evolfId}_data.zip"
@@ -708,6 +761,7 @@ class DownloadByEvolfId(APIView):
                 "exportDate": datetime.datetime.utcnow().isoformat() + "Z",
                 "containsFiles": [os.path.basename(f) for f in files_to_zip],
                 "containsCSV": not row_df.empty,
+                "csvFields": list(row_df.columns) if not row_df.empty else [],
                 "version": "1.1"
             }
             zipf.writestr("metadata.json", json.dumps(metadata, indent=2))
@@ -715,4 +769,11 @@ class DownloadByEvolfId(APIView):
 
         # 🧠 Step 5: Return the ZIP as a downloadable file
         response = FileResponse(open(zip_path, 'rb'), as_attachment=True, filename=zip_filename)
+        
+        # Clean up the temporary zip file after sending
+        try:
+            os.remove(zip_path)
+        except:
+            pass
+            
         return response
