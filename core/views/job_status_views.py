@@ -22,7 +22,7 @@ class JobStatusAPIView(APIView):
     def get(self, request, job_id):
         job_dir = os.path.join(JOB_DATA_DIR, job_id)
         if not os.path.isdir(job_dir):
-            return Response({"error": "Job not not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
 
         output_dir = os.path.join(job_dir, "output")
         input_dir = os.path.join(job_dir, "input")
@@ -67,7 +67,7 @@ class JobStatusAPIView(APIView):
     def _parse_prediction_results(self, output_dir: str, input_dir: str) -> list:
         """
         Parse Prediction_Output.csv and input CSV to combine results.
-        Returns list of dicts with: ID, SMILES, Mutated_Sequence, Predicted_Label, P1
+        Returns list of dicts with: ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID, Predicted_Label, P1
         """
         predictions = []
         
@@ -80,6 +80,7 @@ class JobStatusAPIView(APIView):
                 with open(output_csv_path, 'r', newline='', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
+                        # The output CSV should have 'ID' column that matches input CSV
                         row_id = row.get('ID', '').strip()
                         if row_id:
                             output_data[row_id] = {
@@ -89,7 +90,7 @@ class JobStatusAPIView(APIView):
             except Exception as e:
                 print(f"Error reading output CSV: {e}")
 
-        # Read input CSV to get SMILES and Mutated_Sequence
+        # Read input CSV to get original data (ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID)
         input_data = {}
         if os.path.isdir(input_dir):
             for fn in os.listdir(input_dir):
@@ -98,28 +99,64 @@ class JobStatusAPIView(APIView):
                     try:
                         with open(input_csv_path, 'r', newline='', encoding='utf-8') as f:
                             reader = csv.DictReader(f)
-                            for idx, row in enumerate(reader):
-                                # Use 0-based index as ID (matching output format)
-                                row_id = str(idx)
-                                input_data[row_id] = {
-                                    'smiles': row.get('SMILES', '').strip(),
-                                    'mutated_sequence': row.get('Mutated_Sequence', '').strip()
-                                }
+                            for row in reader:
+                                # Use the actual ID column from input CSV (should be numeric string like "1", "2", etc.)
+                                row_id = row.get('ID', '').strip()
+                                if row_id:
+                                    input_data[row_id] = {
+                                        'temp_ligand_id': row.get('Temp_Ligand_ID', '').strip(),
+                                        'smiles': row.get('SMILES', '').strip(),
+                                        'mutated_sequence': row.get('Mutated_Sequence', '').strip(),
+                                        'temp_rec_id': row.get('TempRecID', '').strip()
+                                    }
                     except Exception as e:
                         print(f"Error reading input CSV: {e}")
                     break  # Only read first CSV found
 
-        # Combine output and input data
+        # Combine output and input data using the ID as key
+        # First, try to match by ID
+        matched_ids = set()
         for row_id, out_row in output_data.items():
-            in_row = input_data.get(row_id, {})
-            predictions.append({
-                'id': row_id,
-                'smiles': in_row.get('smiles', ''),
-                'mutated_sequence': in_row.get('mutated_sequence', ''),
-                'predicted_label': out_row.get('predicted_label', ''),
-                'p1': out_row.get('p1', '')
-            })
+            in_row = input_data.get(row_id)
+            if in_row:
+                predictions.append({
+                    'id': row_id,
+                    'temp_ligand_id': in_row.get('temp_ligand_id', ''),
+                    'smiles': in_row.get('smiles', ''),
+                    'mutated_sequence': in_row.get('mutated_sequence', ''),
+                    'temp_rec_id': in_row.get('temp_rec_id', ''),
+                    'predicted_label': out_row.get('predicted_label', ''),
+                    'p1': out_row.get('p1', '')
+                })
+                matched_ids.add(row_id)
+            else:
+                # If no match found by ID, include output data only
+                predictions.append({
+                    'id': row_id,
+                    'temp_ligand_id': '',
+                    'smiles': '',
+                    'mutated_sequence': '',
+                    'temp_rec_id': '',
+                    'predicted_label': out_row.get('predicted_label', ''),
+                    'p1': out_row.get('p1', '')
+                })
 
+        # Also include any input rows that didn't have output predictions
+        for row_id, in_row in input_data.items():
+            if row_id not in matched_ids:
+                predictions.append({
+                    'id': row_id,
+                    'temp_ligand_id': in_row.get('temp_ligand_id', ''),
+                    'smiles': in_row.get('smiles', ''),
+                    'mutated_sequence': in_row.get('mutated_sequence', ''),
+                    'temp_rec_id': in_row.get('temp_rec_id', ''),
+                    'predicted_label': '',
+                    'p1': ''
+                })
+
+        # Sort by ID for consistent ordering
+        predictions.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 0)
+        
         return predictions
 
     def _zip_and_serve(self, job_dir: str, job_id: str, output_dir: str):
