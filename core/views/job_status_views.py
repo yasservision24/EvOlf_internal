@@ -1,5 +1,6 @@
 # predict/views.py
 import os
+import csv
 import zipfile
 from django.conf import settings
 from django.http import FileResponse
@@ -13,7 +14,7 @@ JOB_DATA_DIR = getattr(settings, "JOB_DATA_DIR", None)
 class JobStatusAPIView(APIView):
     """
     GET /predict/job/<job_id>/
-      - If output/ contains files -> return {"status":"finished","job_id":..., "output_files":[...]}
+      - If output/ contains files -> return {"status":"finished","job_id":..., "output_files":[...], "predictions":[...]}
       - If ?download=output (or ?dl=output) and output/ has files -> return zip attachment of output/
       - Otherwise -> 404 {"error":"Job status not found"}
     """
@@ -24,6 +25,7 @@ class JobStatusAPIView(APIView):
             return Response({"error": "Job not not found"}, status=status.HTTP_404_NOT_FOUND)
 
         output_dir = os.path.join(job_dir, "output")
+        input_dir = os.path.join(job_dir, "input")
 
         # gather output files (if any)
         output_files = []
@@ -48,11 +50,77 @@ class JobStatusAPIView(APIView):
         if download_param and download_param.lower() == "output":
             return self._zip_and_serve(job_dir, job_id, output_dir)
 
-        # Otherwise return finished + list of output files
+        # Parse prediction results from CSV files
+        predictions = self._parse_prediction_results(output_dir, input_dir)
+
+        # Otherwise return finished + list of output files + predictions
         return Response(
-            {"job_id": job_id, "status": "finished", "output_files": output_files},
+            {
+                "job_id": job_id,
+                "status": "finished",
+                "output_files": output_files,
+                "predictions": predictions
+            },
             status=status.HTTP_200_OK,
         )
+
+    def _parse_prediction_results(self, output_dir: str, input_dir: str) -> list:
+        """
+        Parse Prediction_Output.csv and input CSV to combine results.
+        Returns list of dicts with: ID, SMILES, Mutated_Sequence, Predicted_Label, P1
+        """
+        predictions = []
+        
+        # Read output predictions
+        output_csv_path = os.path.join(output_dir, "Prediction_Output.csv")
+        output_data = {}
+        
+        if os.path.isfile(output_csv_path):
+            try:
+                with open(output_csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        row_id = row.get('ID', '').strip()
+                        if row_id:
+                            output_data[row_id] = {
+                                'predicted_label': row.get('Predicted Label', '').strip(),
+                                'p1': row.get('P1', '').strip()
+                            }
+            except Exception as e:
+                print(f"Error reading output CSV: {e}")
+
+        # Read input CSV to get SMILES and Mutated_Sequence
+        input_data = {}
+        if os.path.isdir(input_dir):
+            for fn in os.listdir(input_dir):
+                if fn.endswith('.csv'):
+                    input_csv_path = os.path.join(input_dir, fn)
+                    try:
+                        with open(input_csv_path, 'r', newline='', encoding='utf-8') as f:
+                            reader = csv.DictReader(f)
+                            for idx, row in enumerate(reader):
+                                # Use 0-based index as ID (matching output format)
+                                row_id = str(idx)
+                                input_data[row_id] = {
+                                    'smiles': row.get('SMILES', '').strip(),
+                                    'mutated_sequence': row.get('Mutated_Sequence', '').strip()
+                                }
+                    except Exception as e:
+                        print(f"Error reading input CSV: {e}")
+                    break  # Only read first CSV found
+
+        # Combine output and input data
+        for row_id, out_row in output_data.items():
+            in_row = input_data.get(row_id, {})
+            predictions.append({
+                'id': row_id,
+                'smiles': in_row.get('smiles', ''),
+                'mutated_sequence': in_row.get('mutated_sequence', ''),
+                'predicted_label': out_row.get('predicted_label', ''),
+                'p1': out_row.get('p1', '')
+            })
+
+        return predictions
 
     def _zip_and_serve(self, job_dir: str, job_id: str, output_dir: str):
         """Create zip of output/ and return it as FileResponse (attachment)."""
