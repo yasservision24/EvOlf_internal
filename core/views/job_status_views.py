@@ -68,6 +68,7 @@ class JobStatusAPIView(APIView):
         """
         Parse Prediction_Output.csv and input CSV to combine results.
         Returns list of dicts with: ID, Temp_Ligand_ID, SMILES, Mutated_Sequence, TempRecID, Predicted_Label, P1
+        Converts 1 to "Agonist (1)" and 0 to "Non-Agonist (0)"
         """
         predictions = []
         
@@ -83,8 +84,18 @@ class JobStatusAPIView(APIView):
                         # The output CSV should have 'ID' column that matches input CSV
                         row_id = row.get('ID', '').strip()
                         if row_id:
+                            # Get predicted label and convert to human-readable format
+                            pred_label_raw = row.get('Predicted Label', '').strip()
+                            # Convert 1 to "Agonist (1)" and 0 to "Non-Agonist (0)"
+                            if pred_label_raw == '1':
+                                pred_label = "Agonist (1)"
+                            elif pred_label_raw == '0':
+                                pred_label = "Non-Agonist (0)"
+                            else:
+                                pred_label = pred_label_raw  # Keep as is if not 0 or 1
+                            
                             output_data[row_id] = {
-                                'predicted_label': row.get('Predicted Label', '').strip(),
+                                'predicted_label': pred_label,
                                 'p1': row.get('P1', '').strip()
                             }
             except Exception as e:
